@@ -136,34 +136,72 @@ async def fetch_serpapi_patents(
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def fetch_lens_patents(
-    query: str, client: httpx.AsyncClient
+    query: str, client: httpx.AsyncClient, api_key: str = ""
 ) -> List[Dict[str, Any]]:
-    """Fetch patents from Lens.org free API (no auth required for basic queries)."""
-    payload = {
-        "query": {"match": {"title": query}},
-        "size": 10,
-        "include": ["patent_id", "title", "abstract", "applicant", "lens_id", "classification_ipc"],
+    """Fetch patents from Lens.org API (Bearer token required)."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
     }
-    resp = await client.post(LENS_URL, json=payload, timeout=30.0)
+    logger.debug("[patent_api] fetch_lens_patents headers: %s", headers)
+    payload = {
+        "query": {
+            "bool": {
+                "should": [
+                    {"match": {"title": query}},
+                    {"match": {"abstract": query}},
+                ]
+            }
+        },
+        "size": 10,
+        "include": ["lens_id", "abstract", "date_published", "biblio"],
+    }
+    resp = await client.post(LENS_URL, json=payload, headers=headers, timeout=30.0)
     resp.raise_for_status()
 
     results = []
     for r in resp.json().get("data", []):
-        applicants = r.get("applicant") or []
-        assignee = applicants[0].get("name", "") if applicants else ""
         lens_id = r.get("lens_id", "")
         url = f"https://lens.org/lens/patent/{lens_id}" if lens_id else ""
+
+        biblio = r.get("biblio") or {}
+
+        # Title: biblio.invention_title is a list of {text, lang} dicts; prefer English
+        title = ""
+        for t in (biblio.get("invention_title") or []):
+            if isinstance(t, dict):
+                if t.get("lang") == "en":
+                    title = t.get("text", "")
+                    break
+                if not title:
+                    title = t.get("text", "")
+
+        # Applicant: biblio.parties.applicants[0].extracted_name.value
+        parties = biblio.get("parties") or {}
+        applicants = parties.get("applicants") or []
+        assignee = ""
+        if applicants:
+            extracted = applicants[0].get("extracted_name") or {}
+            assignee = extracted.get("value", "")
+
+        # IPC classifications: biblio.classifications_ipcr.classifications[].symbol
         ipc_codes = []
-        for item in (r.get("classification_ipc") or []):
+        ipcr = biblio.get("classifications_ipcr") or {}
+        for item in (ipcr.get("classifications") or []):
             if len(ipc_codes) >= 3:
                 break
             if isinstance(item, dict) and item.get("symbol"):
                 ipc_codes.append(item["symbol"])
-        raw_date = r.get("priority_date") or r.get("filing_date") or r.get("date_published")
+
+        # Dates: priority > application filing > date_published
+        priority_date = ((biblio.get("priority_claims") or {}).get("earliest_claim") or {}).get("date")
+        filing_date = (biblio.get("application_reference") or {}).get("date")
+        raw_date = priority_date or filing_date or r.get("date_published")
         filing_year = int(str(raw_date)[:4]) if raw_date and str(raw_date)[:4].isdigit() else None
+
         results.append({
-            "patent_id": r.get("patent_id", ""),
-            "title": r.get("title", ""),
+            "patent_id": lens_id,
+            "title": title,
             "abstract": r.get("abstract", ""),
             "assignee": assignee,
             "url": url,

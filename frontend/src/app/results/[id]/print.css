@@ -17,24 +17,48 @@
   }
 
   /* Reset text colors */
-  .text-white { color: black !important; }
+  .text-white {
+    color: black !important;
+  }
   .text-gray-400,
-  .text-gray-500 { color: #374151 !important; }
+  .text-gray-500 {
+    color: #374151 !important;
+  }
   .text-blue-300,
-  .text-blue-400 { color: #1d4ed8 !important; }
-  .text-green-300 { color: #166534 !important; }
-  .text-yellow-300 { color: #92400e !important; }
-  .text-red-300 { color: #991b1b !important; }
+  .text-blue-400 {
+    color: #1d4ed8 !important;
+  }
+  .text-green-300 {
+    color: #166534 !important;
+  }
+  .text-yellow-300 {
+    color: #92400e !important;
+  }
+  .text-red-300 {
+    color: #991b1b !important;
+  }
 
   /* Card borders: dark gray → light gray */
-  .border-gray-700 { border-color: #e5e7eb !important; }
+  .border-gray-700 {
+    border-color: #e5e7eb !important;
+  }
 
   /* Badge pill backgrounds */
-  .bg-blue-900 { background-color: #dbeafe !important; }
-  .bg-purple-900 { background-color: #ede9fe !important; }
-  .bg-green-900 { background-color: #dcfce7 !important; }
-  .bg-yellow-900 { background-color: #fef9c3 !important; }
-  .bg-red-900 { background-color: #fee2e2 !important; }
+  .bg-blue-900 {
+    background-color: #dbeafe !important;
+  }
+  .bg-purple-900 {
+    background-color: #ede9fe !important;
+  }
+  .bg-green-900 {
+    background-color: #dcfce7 !important;
+  }
+  .bg-yellow-900 {
+    background-color: #fef9c3 !important;
+  }
+  .bg-red-900 {
+    background-color: #fee2e2 !important;
+  }
 
   /* Patent ID badge links */
   a.font-mono {
@@ -45,7 +69,7 @@
 
   /* Serif font for the full brief section */
   .brief-content {
-    font-family: Georgia, 'Times New Roman', serif;
+    font-family: Georgia, "Times New Roman", serif;
     font-size: 13px;
     line-height: 1.7;
   }

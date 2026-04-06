@@ -9,7 +9,7 @@ interface MarkdownRendererProps {
 
 function renderInline(text: string): React.ReactNode[] {
   const parts = text.split(
-    /(\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\)|\[[^\]]+\])/g
+    /(\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\)|\[[^\]]+\])/g,
   );
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) {
@@ -56,7 +56,7 @@ export default function MarkdownRenderer({
       elements.push(
         <h1 key={i} className="text-2xl font-bold text-white mt-8 mb-4">
           {renderInline(line.slice(2))}
-        </h1>
+        </h1>,
       );
     } else if (line.startsWith("## ")) {
       elements.push(
@@ -65,13 +65,13 @@ export default function MarkdownRenderer({
           className="text-xl font-bold text-white mt-6 mb-3 border-b border-gray-700 pb-2"
         >
           {renderInline(line.slice(3))}
-        </h2>
+        </h2>,
       );
     } else if (line.startsWith("### ")) {
       elements.push(
         <h3 key={i} className="text-lg font-semibold text-blue-300 mt-5 mb-2">
           {renderInline(line.slice(4))}
-        </h3>
+        </h3>,
       );
     } else if (line.startsWith("> ")) {
       elements.push(
@@ -80,7 +80,7 @@ export default function MarkdownRenderer({
           className="border-l-4 border-blue-500 pl-4 text-gray-300 italic my-3"
         >
           {renderInline(line.slice(2))}
-        </blockquote>
+        </blockquote>,
       );
     } else if (line.trim() === "---") {
       elements.push(<hr key={i} className="border-gray-700 my-6" />);
@@ -91,13 +91,13 @@ export default function MarkdownRenderer({
           className="text-gray-300 ml-4 list-decimal list-inside mb-1"
         >
           {renderInline(line.replace(/^\d+\.\s/, ""))}
-        </li>
+        </li>,
       );
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
       elements.push(
         <li key={i} className="text-gray-300 ml-4 list-disc list-inside mb-1">
           {renderInline(line.slice(2))}
-        </li>
+        </li>,
       );
     } else if (line.trim() === "") {
       elements.push(<div key={i} className="h-2" />);
@@ -105,7 +105,7 @@ export default function MarkdownRenderer({
       elements.push(
         <p key={i} className="text-gray-300 leading-relaxed mb-2">
           {renderInline(line)}
-        </p>
+        </p>,
       );
     }
   });

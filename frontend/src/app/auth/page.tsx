@@ -31,14 +31,19 @@ export default function AuthPage() {
       const { error: authError } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo: typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "",
+          emailRedirectTo:
+            typeof window !== "undefined"
+              ? `${window.location.origin}/auth/callback`
+              : "",
         },
       });
       if (authError) throw authError;
       setSent(true);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to send magic link. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Failed to send magic link. Please try again.",
       );
     } finally {
       setIsSubmitting(false);
@@ -68,13 +73,20 @@ export default function AuthPage() {
                   stroke="currentColor"
                   strokeWidth={2}
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M5 13l4 4L19 7"
+                  />
                 </svg>
               </div>
-              <h2 className="text-white font-semibold text-lg mb-2">Check your email!</h2>
+              <h2 className="text-white font-semibold text-lg mb-2">
+                Check your email!
+              </h2>
               <p className="text-gray-400 text-sm">
                 We sent a magic link to{" "}
-                <span className="text-gray-200">{email}</span>. Click it to sign in.
+                <span className="text-gray-200">{email}</span>. Click it to sign
+                in.
               </p>
             </div>
           ) : (

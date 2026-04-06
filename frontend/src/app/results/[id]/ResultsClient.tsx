@@ -8,7 +8,9 @@ import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
 
 // ─── Dynamic import for graph (SSR disabled — canvas API) ────────────────────
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
+const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
+  ssr: false,
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -108,20 +110,30 @@ function buildGraphData(clusters: Cluster[], citationLinks: CitationLink[]) {
   clusters.forEach((cluster, idx) => {
     cluster.patent_ids.forEach((pid) => {
       if (!nodeMap.has(pid)) {
-        nodeMap.set(pid, { id: pid, clusterIdx: idx, clusterName: cluster.theme_name });
+        nodeMap.set(pid, {
+          id: pid,
+          clusterIdx: idx,
+          clusterName: cluster.theme_name,
+        });
       }
     });
   });
 
   // Include any node referenced in links even if not in clusters
   citationLinks.forEach(({ source, target }) => {
-    if (!nodeMap.has(source)) nodeMap.set(source, { id: source, clusterIdx: 0, clusterName: "" });
-    if (!nodeMap.has(target)) nodeMap.set(target, { id: target, clusterIdx: 0, clusterName: "" });
+    if (!nodeMap.has(source))
+      nodeMap.set(source, { id: source, clusterIdx: 0, clusterName: "" });
+    if (!nodeMap.has(target))
+      nodeMap.set(target, { id: target, clusterIdx: 0, clusterName: "" });
   });
 
   return {
     nodes: Array.from(nodeMap.values()),
-    links: citationLinks.map((l) => ({ source: l.source, target: l.target, strength: l.strength })),
+    links: citationLinks.map((l) => ({
+      source: l.source,
+      target: l.target,
+      strength: l.strength,
+    })),
   };
 }
 
@@ -144,8 +156,8 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
                   isDone
                     ? "bg-green-500 border-green-500"
                     : isActive
-                    ? "border-blue-400 bg-transparent"
-                    : "border-gray-700 bg-transparent"
+                      ? "border-blue-400 bg-transparent"
+                      : "border-gray-700 bg-transparent"
                 }`}
               >
                 {isDone ? (
@@ -183,10 +195,10 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
                 isDone
                   ? "text-gray-500 line-through"
                   : isActive
-                  ? "text-blue-300 font-medium"
-                  : isPending
-                  ? "text-gray-600"
-                  : "text-gray-400"
+                    ? "text-blue-300 font-medium"
+                    : isPending
+                      ? "text-gray-600"
+                      : "text-gray-400"
               }`}
             >
               {step.label}
@@ -222,13 +234,17 @@ function WhiteSpaceCard({ gap }: { gap: WhiteSpaceGap }) {
 
 function TrendCard({ cluster }: { cluster: Cluster }) {
   const trend = cluster.filing_trend ?? [];
-  const W = 120, H = 50, barW = 4, gap = 2;
+  const W = 120,
+    H = 50,
+    barW = 4,
+    gap = 2;
   const maxCount = Math.max(...trend.map((t) => t.count), 1);
   const latestYear = trend[trend.length - 1]?.year;
   const totalBarSpace = trend.length * (barW + gap) - gap;
   const startX = (W - totalBarSpace) / 2;
 
-  const firstAvg = trend.length >= 2 ? (trend[0].count + trend[1].count) / 2 : 0;
+  const firstAvg =
+    trend.length >= 2 ? (trend[0].count + trend[1].count) / 2 : 0;
   const lastAvg =
     trend.length >= 2
       ? (trend[trend.length - 2].count + trend[trend.length - 1].count) / 2
@@ -237,8 +253,8 @@ function TrendCard({ cluster }: { cluster: Cluster }) {
     lastAvg > firstAvg * 1.2
       ? { label: "↑ Accelerating", cls: "text-green-400" }
       : lastAvg < firstAvg * 0.8
-      ? { label: "↓ Slowing", cls: "text-gray-500" }
-      : { label: "→ Stable", cls: "text-yellow-400" };
+        ? { label: "↓ Slowing", cls: "text-gray-500" }
+        : { label: "→ Stable", cls: "text-yellow-400" };
 
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-xl p-4 min-w-[180px] flex flex-col gap-2">
@@ -267,7 +283,9 @@ function TrendCard({ cluster }: { cluster: Cluster }) {
       <p className="text-xs text-gray-500">
         {trend[0].year} → {latestYear}
       </p>
-      <p className={`text-xs font-medium ${indicator.cls}`}>{indicator.label}</p>
+      <p className={`text-xs font-medium ${indicator.cls}`}>
+        {indicator.label}
+      </p>
     </div>
   );
 }
@@ -277,9 +295,13 @@ function ClusterCard({ cluster }: { cluster: Cluster }) {
     <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 flex flex-col gap-3 print:break-inside-avoid">
       <div className="flex items-center gap-2">
         <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-        <h3 className="text-white font-semibold text-sm">{cluster.theme_name}</h3>
+        <h3 className="text-white font-semibold text-sm">
+          {cluster.theme_name}
+        </h3>
       </div>
-      <p className="text-gray-400 text-xs leading-relaxed">{cluster.description}</p>
+      <p className="text-gray-400 text-xs leading-relaxed">
+        {cluster.description}
+      </p>
       {cluster.ipc_codes && cluster.ipc_codes.length > 0 && (
         <div className="flex flex-col gap-1">
           <span className="text-xs text-gray-500">Classifications</span>
@@ -411,7 +433,9 @@ function NodeSidePanel({
       className="fixed right-4 top-1/4 w-72 bg-gray-900 border border-gray-700 rounded-xl p-5 shadow-2xl z-50"
     >
       <div className="flex items-start justify-between mb-4">
-        <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Patent</span>
+        <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+          Patent
+        </span>
         <button
           onClick={onClose}
           className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none"
@@ -420,7 +444,9 @@ function NodeSidePanel({
           ×
         </button>
       </div>
-      <p className="font-mono text-white text-sm font-semibold mb-3 break-all">{node.id}</p>
+      <p className="font-mono text-white text-sm font-semibold mb-3 break-all">
+        {node.id}
+      </p>
       {cluster && (
         <div className="mb-4">
           <span className="text-xs text-gray-500">Cluster</span>
@@ -585,7 +611,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     const realStepIdx = STEPS.findIndex((s) => s.key === currentStep);
     const displayStepIdx = Math.max(
       simulatedStepIdx,
-      realStepIdx < 0 ? 0 : realStepIdx
+      realStepIdx < 0 ? 0 : realStepIdx,
     );
 
     return (
@@ -677,12 +703,14 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         <div className="flex gap-2 flex-wrap">
           {clusters.length > 0 && (
             <span className="bg-blue-900 text-blue-300 text-xs px-3 py-1 rounded-full border border-blue-700">
-              {clusters.length} Prior Art Cluster{clusters.length !== 1 ? "s" : ""}
+              {clusters.length} Prior Art Cluster
+              {clusters.length !== 1 ? "s" : ""}
             </span>
           )}
           {gaps.length > 0 && (
             <span className="bg-purple-900 text-purple-300 text-xs px-3 py-1 rounded-full border border-purple-700">
-              {gaps.length} White Space Opportunit{gaps.length !== 1 ? "ies" : "y"}
+              {gaps.length} White Space Opportunit
+              {gaps.length !== 1 ? "ies" : "y"}
             </span>
           )}
         </div>
@@ -705,7 +733,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       {/* Section 1.5: Technology Trends */}
       {clusters.some((c) => (c.filing_trend ?? []).length >= 2) && (
         <section className="mb-12">
-          <h2 className="text-xl font-bold text-white mb-5">Technology Trends</h2>
+          <h2 className="text-xl font-bold text-white mb-5">
+            Technology Trends
+          </h2>
           <div className="flex flex-row gap-4 overflow-x-auto pb-2">
             {clusters
               .filter((c) => (c.filing_trend ?? []).length >= 2)
@@ -737,7 +767,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             Patent Relationship Graph
           </h2>
           <p className="text-gray-500 text-sm mb-5">
-            Click a node to see patent details. Node colors match clusters above.
+            Click a node to see patent details. Node colors match clusters
+            above.
           </p>
           <PatentGraphSection
             clusters={clusters}
@@ -765,9 +796,19 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               onClick={handleCopyLink}
               className="text-sm text-gray-400 hover:text-gray-200 border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
               </svg>
               {copied ? "Copied!" : "Copy link"}
             </button>

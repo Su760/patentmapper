@@ -156,7 +156,7 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
                     )
             # Priority 2: Lens.org
             try:
-                return await fetch_lens_patents(query, client)
+                return await fetch_lens_patents(query, client, api_key=settings.lens_api_key)
             except Exception as e:
                 logger.warning(
                     "[fetcher] Lens.org failed for query '%s': %s — falling back to SerpAPI", query, e

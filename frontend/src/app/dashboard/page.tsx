@@ -70,7 +70,7 @@ function DashboardContent() {
               current_step: (row.current_step as string | null) ?? null,
               error_message: (row.error_message as string | null) ?? null,
               inventionIdea: (row.invention_idea as string | null) ?? null,
-            }))
+            })),
           );
           setLoading(false);
         });
@@ -98,11 +98,14 @@ function DashboardContent() {
                 .select("invention_idea")
                 .eq("id", id)
                 .single();
-              return (data as { invention_idea: string } | null)?.invention_idea ?? null;
+              return (
+                (data as { invention_idea: string } | null)?.invention_idea ??
+                null
+              );
             } catch {
               return null;
             }
-          })
+          }),
         ),
       ]).then(([statuses, ideas]) => {
         setItems(
@@ -115,7 +118,7 @@ function DashboardContent() {
               error_message: s?.error_message ?? null,
               inventionIdea: ideas[idx],
             };
-          })
+          }),
         );
         setLoading(false);
       });

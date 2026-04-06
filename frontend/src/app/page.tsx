@@ -13,11 +13,11 @@ const MIN_CHARS = 20;
 function saveJobId(jobId: string): void {
   try {
     const existing = JSON.parse(
-      localStorage.getItem(JOBS_KEY) ?? "[]"
+      localStorage.getItem(JOBS_KEY) ?? "[]",
     ) as string[];
     const updated = [jobId, ...existing.filter((id) => id !== jobId)].slice(
       0,
-      20
+      20,
     );
     localStorage.setItem(JOBS_KEY, JSON.stringify(updated));
   } catch {
@@ -46,7 +46,11 @@ export default function Home() {
     setError(null);
 
     try {
-      const { job_id } = await createJob(inventionText, jurisdiction, session?.access_token);
+      const { job_id } = await createJob(
+        inventionText,
+        jurisdiction,
+        session?.access_token,
+      );
       saveJobId(job_id);
       router.push(`/results/${job_id}`);
     } catch (err) {
@@ -61,7 +65,7 @@ export default function Home() {
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to connect to backend. Make sure it's running on port 8000."
+          : "Failed to connect to backend. Make sure it's running on port 8000.",
       );
       setIsLoading(false);
     }

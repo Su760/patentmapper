@@ -7,15 +7,18 @@ This document serves as the architectural blueprint and build specification for 
 ## 1. Architecture Critique
 
 **What's great:**
-* **LangGraph for sequentially complex workflows:** This is the perfect use case for LangGraph. A strict DAG (Directed Acyclic Graph) provides predictable state management and observability.
-* **Component stack:** Next.js 14 + FastAPI + Supabase is an industry-standard modern stack that balances rapid development with scale. 
+
+- **LangGraph for sequentially complex workflows:** This is the perfect use case for LangGraph. A strict DAG (Directed Acyclic Graph) provides predictable state management and observability.
+- **Component stack:** Next.js 14 + FastAPI + Supabase is an industry-standard modern stack that balances rapid development with scale.
 
 **What's missing:**
-* **Async Task Execution (Crucial):** An AI flow hitting Google Patents, Lens.org, embedding APIs, and LLMs sequentially will take *minutes*. If your Next.js app waits for a synchronous HTTP response from FastAPI, the request *will* timeout. You need an architecture where FastAPI immediately returns a `job_id`, and the Next.js frontend polls (or uses Server-Sent Events / WebSockets) to check the status.
-* **State Persistence for graph debugging:** LangGraph has built-in state persistence (`checkpointer`). You should save the intermediate graph states in a Postgres table so you can debug *where* a search failed and resume it.
+
+- **Async Task Execution (Crucial):** An AI flow hitting Google Patents, Lens.org, embedding APIs, and LLMs sequentially will take _minutes_. If your Next.js app waits for a synchronous HTTP response from FastAPI, the request _will_ timeout. You need an architecture where FastAPI immediately returns a `job_id`, and the Next.js frontend polls (or uses Server-Sent Events / WebSockets) to check the status.
+- **State Persistence for graph debugging:** LangGraph has built-in state persistence (`checkpointer`). You should save the intermediate graph states in a Postgres table so you can debug _where_ a search failed and resume it.
 
 **What's over-engineered:**
-* **K-means Clustering Node:** Using embeddings + k-means for ~50-100 patents is slightly over-engineered when using Gemini 2.0 Flash, which has a 1-million token context window. You can pass the JSON of 100 patent abstracts directly into Gemini and ask it to natively output semantic clusters. This reduces pipeline fragility (no need to manage k, tune embeddings, or write custom clustering heuristics).
+
+- **K-means Clustering Node:** Using embeddings + k-means for ~50-100 patents is slightly over-engineered when using Gemini 2.0 Flash, which has a 1-million token context window. You can pass the JSON of 100 patent abstracts directly into Gemini and ask it to natively output semantic clusters. This reduces pipeline fragility (no need to manage k, tune embeddings, or write custom clustering heuristics).
 
 ---
 
@@ -104,6 +107,7 @@ CREATE TABLE patents (
 ## 4. LangGraph Agent Design
 
 ### State Definition (`state.py`)
+
 ```python
 from typing import TypedDict, List, Dict, Any
 
@@ -120,41 +124,43 @@ class LandscapeState(TypedDict):
 ```
 
 ### The Nodes (Input -> Output)
-1. **Query Expander Node**: 
-   - *In:* `invention_idea`
-   - *Out:* `search_queries` (via Gemini 2.0 Flash function calling to force a List).
-2. **Patent Fetcher Node**: 
-   - *In:* `search_queries`
-   - *Out:* `raw_patents` (Parallel async HTTP requests to Google Patents/Lens).
-3. **Deduplicator Node**: 
-   - *In:* `raw_patents`
-   - *Out:* `deduped_patents` (Filter out shared `patent_number`s, normalize JSON fields).
-4. **Clusterer Node**: 
-   - *In:* `deduped_patents`
-   - *Out:* `clusters` (Pass top ~50 patents into Gemini, ask to categorize into 3-5 distinct thematic clusters with titles and assigned `patent_number` lists).
-5. **White Space Analyzer Node**: 
-   - *In:* `invention_idea`, `clusters`
-   - *Out:* `white_space_analysis` (Prompt: "Compare the invention idea to the existing clusters. Identify 2 severe technical gaps not addressed by current prior art").
-6. **Report Writer Node**: 
-   - *In:* `invention_idea`, `clusters`, `white_space_analysis`
-   - *Out:* `final_report` (Markdown synthesis).
+
+1. **Query Expander Node**:
+   - _In:_ `invention_idea`
+   - _Out:_ `search_queries` (via Gemini 2.0 Flash function calling to force a List).
+2. **Patent Fetcher Node**:
+   - _In:_ `search_queries`
+   - _Out:_ `raw_patents` (Parallel async HTTP requests to Google Patents/Lens).
+3. **Deduplicator Node**:
+   - _In:_ `raw_patents`
+   - _Out:_ `deduped_patents` (Filter out shared `patent_number`s, normalize JSON fields).
+4. **Clusterer Node**:
+   - _In:_ `deduped_patents`
+   - _Out:_ `clusters` (Pass top ~50 patents into Gemini, ask to categorize into 3-5 distinct thematic clusters with titles and assigned `patent_number` lists).
+5. **White Space Analyzer Node**:
+   - _In:_ `invention_idea`, `clusters`
+   - _Out:_ `white_space_analysis` (Prompt: "Compare the invention idea to the existing clusters. Identify 2 severe technical gaps not addressed by current prior art").
+6. **Report Writer Node**:
+   - _In:_ `invention_idea`, `clusters`, `white_space_analysis`
+   - _Out:_ `final_report` (Markdown synthesis).
 
 ---
 
 ## 5. Top 3 Technical Risks & Mitigations
 
 1. **Risk: Brittle external scraping/APIs failing.** Free API tiers (Lens, SerpAPI) have strict rate limits and occasionally change JSON formats or timeout.
-   - *Mitigation:* Implement strict schema validation (Pydantic) for API responses. Use `tenacity` in Python for exponential backoff and retries. Build a "mock" mode for local development to avoid burning API credits.
+   - _Mitigation:_ Implement strict schema validation (Pydantic) for API responses. Use `tenacity` in Python for exponential backoff and retries. Build a "mock" mode for local development to avoid burning API credits.
 2. **Risk: Next.js Vercel Timeout (504 Error).** Vercel serverless functions time out after 10-60 seconds. This workflow will take multiple minutes.
-   - *Mitigation:* The FastAPI endpoint must just insert a row into the `searches` table, trigger a FastApi `BackgroundTasks` (or Celery queue), and return `{"status": "processing"}` instantly. The React frontend should poll `GET /api/searches/{id}` every 3 seconds for updates.
+   - _Mitigation:_ The FastAPI endpoint must just insert a row into the `searches` table, trigger a FastApi `BackgroundTasks` (or Celery queue), and return `{"status": "processing"}` instantly. The React frontend should poll `GET /api/searches/{id}` every 3 seconds for updates.
 3. **Risk: LLM Hallucinated "Empty" White Spaces.** The LLM might claim a whitespace exists simply because it missed a detail in a patent abstract.
-   - *Mitigation:* Force the LLM to use heavy citation mechanics (e.g., "Gap X is viable because Cluster A (Patents [US123, US456]) only covers Y, and Cluster B..."). Use system prompts that heavily penalize unsupported claims.
+   - _Mitigation:_ Force the LLM to use heavy citation mechanics (e.g., "Gap X is viable because Cluster A (Patents [US123, US456]) only covers Y, and Cluster B..."). Use system prompts that heavily penalize unsupported claims.
 
 ---
 
 ## 6. MVP Scope (What to cut for v1)
 
 To ship fast, cut the following for V1:
+
 - **Cut PDF Generation:** Generating clean PDFs in Python/Node is notoriously frustrating. Instead, render beautiful Markdown in the React UI and add a "Print Page" button utilizing `@media print` CSS rules.
 - **Cut Vector Database / k-means Embeddings:** Do not bother setting up Pinecone/pgvector yet. Pass up to 50 deduplicated patent abstracts directly in one prompt to Gemini 2.0 Flash to do the clustering organically.
 - **Cut Google Auth:** Start with local magic links (via Supabase) or anonymous sessions storing `search_id` in local storage, just to prove the workflow works.
@@ -167,27 +173,32 @@ To ship fast, cut the following for V1:
 A dense, high-signal, Dashboard-style layout.
 
 **Hero / Header:**
+
 - Title: `Landscape Brief: {Invention Idea snippet}`
 - Badges: `Generated on {Date}` | `X Patents Analyzed`
 
 **Section 1: White Space Opportunities (The "Aha!" Moment)**
+
 - Visually distinct (e.g., dark mode cards on a light page).
 - 2-3 prominent cards.
-- *Card contents:* 
+- _Card contents:_
   - **Gap Title** (e.g., "Real-time edge processing absent")
   - **Description** (1-2 sentences on why it represents an opportunity)
   - **Confidence Score:** e.g., "High Viability" (generated by the LLM).
 
 **Section 2: Prior Art Clusters**
+
 - A masonry or CSS Grid of cards.
-- *Card contents (Per Theme):*
+- _Card contents (Per Theme):_
   - **Cluster Theme:** e.g., "Database indexing methods"
   - **Summary:** 1 sentence wrap-up of what this group does.
   - **Top Patents:** A mini unstyled list of 3-5 patents formatted as `[US12345] Dynamic DB...` (clickable to Google Patents).
 
 **Section 3: Full Synthesis**
+
 - A beautiful standard markdown render of the full `final_report`.
 
 **Sticky Action Bar (Bottom right or Top Right):**
+
 - [ Share ] [ Print to PDF / Save ]
 - During generation, this is replaced by the **State Stepper** (`Fetching patents...` etc).

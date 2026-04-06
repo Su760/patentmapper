@@ -52,7 +52,9 @@ export default function PricingPage() {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
       .then((r) => r.json())
-      .then((data: { plan: string }) => setPlan(data.plan === "pro" ? "pro" : "free"))
+      .then((data: { plan: string }) =>
+        setPlan(data.plan === "pro" ? "pro" : "free"),
+      )
       .catch(() => setPlan("free"));
   }, [session]);
 
@@ -64,11 +66,15 @@ export default function PricingPage() {
     setUpgrading(true);
     setError(null);
     try {
-      const { checkout_url } = await createCheckoutSession(session.access_token);
+      const { checkout_url } = await createCheckoutSession(
+        session.access_token,
+      );
       router.push(checkout_url);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Failed to start checkout. Please try again."
+        err instanceof Error
+          ? err.message
+          : "Failed to start checkout. Please try again.",
       );
       setUpgrading(false);
     }
@@ -105,7 +111,10 @@ export default function PricingPage() {
             </div>
             <ul className="space-y-3 mb-8">
               {FREE_FEATURES.map((f) => (
-                <li key={f} className="flex items-start gap-2 text-gray-300 text-sm">
+                <li
+                  key={f}
+                  className="flex items-start gap-2 text-gray-300 text-sm"
+                >
                   <CheckIcon />
                   {f}
                 </li>
@@ -139,7 +148,10 @@ export default function PricingPage() {
             </div>
             <ul className="space-y-3 mb-8">
               {PRO_FEATURES.map((f) => (
-                <li key={f} className="flex items-start gap-2 text-gray-300 text-sm">
+                <li
+                  key={f}
+                  className="flex items-start gap-2 text-gray-300 text-sm"
+                >
                   <CheckIcon />
                   {f}
                 </li>

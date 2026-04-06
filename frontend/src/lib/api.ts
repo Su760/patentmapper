@@ -12,8 +12,14 @@ export interface JobStatusResponse {
   error_message: string | null;
 }
 
-export async function createJob(inventionIdea: string, jurisdiction: string, jwt?: string): Promise<JobCreatedResponse> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+export async function createJob(
+  inventionIdea: string,
+  jurisdiction: string,
+  jwt?: string,
+): Promise<JobCreatedResponse> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
   const res = await fetch(`${API_BASE}/jobs`, {
     method: "POST",
@@ -22,7 +28,7 @@ export async function createJob(inventionIdea: string, jurisdiction: string, jwt
   });
 
   if (res.status === 402) {
-    const data = await res.json() as { detail: { message: string } };
+    const data = (await res.json()) as { detail: { message: string } };
     const message = data.detail?.message ?? "Monthly limit reached.";
     throw Object.assign(new Error(message), { code: "limit_reached" });
   }
@@ -33,7 +39,9 @@ export async function createJob(inventionIdea: string, jurisdiction: string, jwt
   return res.json() as Promise<JobCreatedResponse>;
 }
 
-export async function createCheckoutSession(jwt: string): Promise<{ checkout_url: string }> {
+export async function createCheckoutSession(
+  jwt: string,
+): Promise<{ checkout_url: string }> {
   const res = await fetch(`${API_BASE}/stripe/create-checkout-session`, {
     method: "POST",
     headers: {
@@ -51,7 +59,9 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   const res = await fetch(`${API_BASE}/jobs/${jobId}`);
 
   if (!res.ok) {
-    throw new Error(`Failed to fetch job status: ${res.status} ${res.statusText}`);
+    throw new Error(
+      `Failed to fetch job status: ${res.status} ${res.statusText}`,
+    );
   }
 
   return res.json() as Promise<JobStatusResponse>;

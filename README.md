@@ -101,21 +101,21 @@ User Input (plain-English invention description)
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **Frontend** | Next.js 14 App Router, TypeScript (strict), Tailwind CSS |
-| **Backend** | FastAPI (fully async), Python 3.13, Pydantic v2 |
-| **Agent framework** | LangGraph — strict DAG, 6 nodes, typed `LandscapeState` |
-| **LLM** | Groq — Llama 3.3 70B Versatile (fast inference, generous free tier) |
-| **Patent data (primary)** | PatentsView API — USPTO open data, free, CPC classification |
-| **Patent data (secondary)** | Lens.org free API — international coverage, IPC classification |
-| **Patent data (tertiary)** | SerpAPI — Google Patents scraping, last-resort fallback |
-| **Database** | Supabase — Postgres, Row Level Security, Auth, Storage |
-| **Auth** | Supabase magic link + anonymous sessions via localStorage |
-| **Payments** | Stripe Checkout + webhooks, subscriptions table with RLS |
-| **Graph visualization** | react-force-graph-2d — canvas, SSR-disabled, WebGL-accelerated |
-| **HTTP client** | httpx (async), semaphore-gated parallel fetching |
-| **Retry logic** | tenacity — exponential backoff, 2–3 attempts per API call |
+| Layer                       | Technology                                                          |
+| --------------------------- | ------------------------------------------------------------------- |
+| **Frontend**                | Next.js 14 App Router, TypeScript (strict), Tailwind CSS            |
+| **Backend**                 | FastAPI (fully async), Python 3.13, Pydantic v2                     |
+| **Agent framework**         | LangGraph — strict DAG, 6 nodes, typed `LandscapeState`             |
+| **LLM**                     | Groq — Llama 3.3 70B Versatile (fast inference, generous free tier) |
+| **Patent data (primary)**   | PatentsView API — USPTO open data, free, CPC classification         |
+| **Patent data (secondary)** | Lens.org free API — international coverage, IPC classification      |
+| **Patent data (tertiary)**  | SerpAPI — Google Patents scraping, last-resort fallback             |
+| **Database**                | Supabase — Postgres, Row Level Security, Auth, Storage              |
+| **Auth**                    | Supabase magic link + anonymous sessions via localStorage           |
+| **Payments**                | Stripe Checkout + webhooks, subscriptions table with RLS            |
+| **Graph visualization**     | react-force-graph-2d — canvas, SSR-disabled, WebGL-accelerated      |
+| **HTTP client**             | httpx (async), semaphore-gated parallel fetching                    |
+| **Retry logic**             | tenacity — exponential backoff, 2–3 attempts per API call           |
 
 ---
 
@@ -234,21 +234,21 @@ Open [http://localhost:3000](http://localhost:3000) and submit an invention desc
 
 All variables live in `.env` at the project root (one directory above `backend/`).
 
-| Variable | Required | Description |
-|---|---|---|
-| `GROQ_API_KEY` | ✅ | Groq API key — powers all 6 agent nodes (query expansion, clustering, whitespace, report, citation links) |
-| `SUPABASE_URL` | ✅ | Supabase project URL |
-| `SUPABASE_ANON_KEY` | ✅ | Supabase anon key — used by backend for JWT verification |
-| `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key — used by Stripe webhook to bypass RLS when writing subscription rows |
-| `PATENTSVIEW_KEY` | — | USPTO PatentsView API key — optional, works without it at default rate limits |
-| `PATENTSVIEW_ENABLED` | — | Set `false` to skip PatentsView (default: `true`) |
-| `LENS_API_KEY` | — | Lens.org API key — optional, basic queries work unauthenticated |
-| `SERPAPI_KEY` | — | SerpAPI key for Google Patents — only used if PatentsView and Lens.org both fail |
-| `SERPAPI_ENABLED` | — | Set `false` to disable SerpAPI fallback entirely (default: `true`) |
-| `STRIPE_SECRET_KEY` | — | Stripe secret key (`sk_...`) — only needed for billing |
-| `STRIPE_PRO_PRICE_ID` | — | Stripe Price ID for the $49/month Pro plan |
-| `STRIPE_WEBHOOK_SECRET` | — | Stripe webhook signing secret (`whsec_...`) |
-| `MOCK_MODE` | — | `true` returns synthetic patent data, burns no API credits (default: `false`) |
+| Variable                | Required | Description                                                                                               |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `GROQ_API_KEY`          | ✅       | Groq API key — powers all 6 agent nodes (query expansion, clustering, whitespace, report, citation links) |
+| `SUPABASE_URL`          | ✅       | Supabase project URL                                                                                      |
+| `SUPABASE_ANON_KEY`     | ✅       | Supabase anon key — used by backend for JWT verification                                                  |
+| `SUPABASE_SERVICE_KEY`  | ✅       | Supabase service role key — used by Stripe webhook to bypass RLS when writing subscription rows           |
+| `PATENTSVIEW_KEY`       | —        | USPTO PatentsView API key — optional, works without it at default rate limits                             |
+| `PATENTSVIEW_ENABLED`   | —        | Set `false` to skip PatentsView (default: `true`)                                                         |
+| `LENS_API_KEY`          | —        | Lens.org API key — optional, basic queries work unauthenticated                                           |
+| `SERPAPI_KEY`           | —        | SerpAPI key for Google Patents — only used if PatentsView and Lens.org both fail                          |
+| `SERPAPI_ENABLED`       | —        | Set `false` to disable SerpAPI fallback entirely (default: `true`)                                        |
+| `STRIPE_SECRET_KEY`     | —        | Stripe secret key (`sk_...`) — only needed for billing                                                    |
+| `STRIPE_PRO_PRICE_ID`   | —        | Stripe Price ID for the $49/month Pro plan                                                                |
+| `STRIPE_WEBHOOK_SECRET` | —        | Stripe webhook signing secret (`whsec_...`)                                                               |
+| `MOCK_MODE`             | —        | `true` returns synthetic patent data, burns no API credits (default: `false`)                             |
 
 ---
 
@@ -262,4 +262,4 @@ All variables live in `.env` at the project root (one directory above `backend/`
 
 ---
 
-*Built with ❤️ for startup CTOs and inventors who deserve better than $10K/year enterprise tools.*
+_Built with ❤️ for startup CTOs and inventors who deserve better than $10K/year enterprise tools._

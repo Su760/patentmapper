@@ -100,9 +100,14 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
         logger.info("[clusterer] mock mode — returning %d clusters", len(MOCK_CLUSTERS))
         return {"clusters": MOCK_CLUSTERS}
 
-    top_patents = state["deduped_patents"][:50]
+    top_patents = state["deduped_patents"][:30]
+    estimated = sum(
+        len((p.get("title") or "")[:80]) + len((p.get("abstract") or "")[:150])
+        for p in top_patents
+    ) // 4
+    logger.info("[clusterer] estimated tokens for Groq: ~%d", estimated)
     abstracts_text = "\n\n".join(
-        f"[{p['patent_id']}] {p['title']}: {p.get('abstract', '')[:300]}"
+        f"[{p['patent_id']}] {(p.get('title') or '')[:80]}: {(p.get('abstract') or '')[:150]}"
         for p in top_patents
     )
 
