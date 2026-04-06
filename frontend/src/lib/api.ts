@@ -66,3 +66,28 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
 
   return res.json() as Promise<JobStatusResponse>;
 }
+
+export interface WhiteSpaceIdea {
+  invention_name: string;
+  one_liner: string;
+  mechanism: string;
+  key_differentiators: string[];
+  why_novel: string;
+}
+
+export async function ideateWhiteSpace(
+  searchId: string,
+  title: string,
+  description: string,
+): Promise<WhiteSpaceIdea> {
+  const res = await fetch(`${API_BASE}/jobs/${searchId}/ideate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      white_space_title: title,
+      white_space_description: description,
+    }),
+  });
+  if (!res.ok) throw new Error(`Ideate failed: ${res.status}`);
+  return res.json() as Promise<WhiteSpaceIdea>;
+}

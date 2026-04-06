@@ -3,12 +3,14 @@ API Routes
 POST /jobs  — create a new patent landscape search job
 GET  /jobs/{job_id} — poll job status
 """
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from groq import AsyncGroq
 from pydantic import BaseModel
 from supabase import AsyncClient
 
@@ -39,6 +41,11 @@ class JobStatusResponse(BaseModel):
     status: str
     current_step: Optional[str] = None
     error_message: Optional[str] = None
+
+
+class IdeateRequest(BaseModel):
+    white_space_title: str
+    white_space_description: str
 
 
 # ── Background task ────────────────────────────────────────────────────────────
@@ -186,6 +193,43 @@ async def create_job(
 
     logger.info("[routes] created job %s", search_id)
     return JobCreatedResponse(job_id=search_id)
+
+
+@router.post("/jobs/{search_id}/ideate")
+async def ideate_white_space(
+    search_id: str,
+    body: IdeateRequest,
+) -> Dict[str, Any]:
+    """Generate a concrete invention idea for a white space opportunity using Groq."""
+    prompt = (
+        "You are a patent strategist. Given this white space opportunity "
+        "in a patent landscape, generate ONE concrete invention idea that fills this gap. "
+        "Be specific — describe the mechanism, key differentiators, and why it avoids existing prior art.\n\n"
+        f"White space: {body.white_space_title}\n"
+        f"Description: {body.white_space_description}\n\n"
+        "Respond in this JSON format:\n"
+        "{\n"
+        '  "invention_name": "...",\n'
+        '  "one_liner": "...",\n'
+        '  "mechanism": "...",\n'
+        '  "key_differentiators": ["...", "...", "..."],\n'
+        '  "why_novel": "..."\n'
+        "}\n"
+        "Return ONLY valid JSON, no markdown."
+    )
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        response = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=600,
+        )
+        idea = json.loads(response.choices[0].message.content)
+        return idea
+    except Exception as e:
+        logger.error("[ideate] Groq error for search %s: %s", search_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)

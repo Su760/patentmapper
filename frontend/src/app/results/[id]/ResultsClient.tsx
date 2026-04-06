@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import { getJobStatus } from "@/lib/api";
+import { getJobStatus, ideateWhiteSpace, WhiteSpaceIdea } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
@@ -210,7 +210,17 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
   );
 }
 
-function WhiteSpaceCard({ gap }: { gap: WhiteSpaceGap }) {
+function WhiteSpaceCard({
+  gap,
+  idea,
+  isIdeating,
+  onIdeate,
+}: {
+  gap: WhiteSpaceGap;
+  idea?: WhiteSpaceIdea;
+  isIdeating: boolean;
+  onIdeate: () => void;
+}) {
   const badgeStyle =
     VIABILITY_STYLES[gap.viability] ??
     "bg-gray-800 text-gray-300 border-gray-600";
@@ -228,6 +238,64 @@ function WhiteSpaceCard({ gap }: { gap: WhiteSpaceGap }) {
         </span>
       </div>
       <p className="text-gray-400 text-sm leading-relaxed">{gap.description}</p>
+
+      {!idea && (
+        <button
+          onClick={onIdeate}
+          disabled={isIdeating}
+          className="self-start mt-1 text-xs border border-purple-500 text-purple-400 hover:bg-purple-500/10 px-3 py-1 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {isIdeating ? (
+            <span className="flex items-center gap-1">
+              <svg
+                className="animate-spin h-3 w-3"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v8z"
+                />
+              </svg>
+              Generating...
+            </span>
+          ) : (
+            "Generate Idea ✨"
+          )}
+        </button>
+      )}
+
+      {idea && (
+        <div className="bg-purple-950/30 border border-purple-800/50 rounded-lg p-4 mt-1">
+          <p className="font-semibold text-purple-300">{idea.invention_name}</p>
+          <p className="text-sm text-gray-300 mt-1">{idea.one_liner}</p>
+          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+            Mechanism
+          </p>
+          <p className="text-xs text-gray-400">{idea.mechanism}</p>
+          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+            Key Differentiators
+          </p>
+          <ul className="list-disc list-inside text-xs text-gray-400">
+            {idea.key_differentiators.map((d, i) => (
+              <li key={i}>{d}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+            Why Novel
+          </p>
+          <p className="text-xs text-gray-400">{idea.why_novel}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -477,6 +545,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [ideatingId, setIdeatingId] = useState<string | null>(null);
+  const [ideas, setIdeas] = useState<Record<string, WhiteSpaceIdea>>({});
 
   const stepperStartedAt = useRef<number>(0);
 
@@ -516,6 +586,18 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     setSearchResult(resultsRes.data as SearchResult);
     setPhase("completed");
   }, [jobId]);
+
+  async function handleIdeate(gap: WhiteSpaceGap) {
+    setIdeatingId(gap.title);
+    try {
+      const idea = await ideateWhiteSpace(jobId, gap.title, gap.description);
+      setIdeas((prev) => ({ ...prev, [gap.title]: idea }));
+    } catch (e) {
+      console.error("Ideate failed", e);
+    } finally {
+      setIdeatingId(null);
+    }
+  }
 
   function handlePrint() {
     const prev = document.title;
@@ -724,7 +806,13 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {gaps.map((gap, idx) => (
-              <WhiteSpaceCard key={idx} gap={gap} />
+              <WhiteSpaceCard
+                key={idx}
+                gap={gap}
+                idea={ideas[gap.title]}
+                isIdeating={ideatingId === gap.title}
+                onIdeate={() => handleIdeate(gap)}
+              />
             ))}
           </div>
         </section>
