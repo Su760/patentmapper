@@ -1,16 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import dynamic from "next/dynamic";
 import { getJobStatus, ideateWhiteSpace, WhiteSpaceIdea } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
-
-// ─── Dynamic import for graph (SSR disabled — canvas API) ────────────────────
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
-  ssr: false,
-});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,20 +65,66 @@ const STEPPER_MIN_MS = 1500;
 const SIMULATE_INTERVAL_MS = 2000;
 const POLL_INTERVAL_MS = 3000;
 
-const VIABILITY_STYLES: Record<string, string> = {
-  High: "bg-green-900 text-green-300 border-green-700",
-  Medium: "bg-yellow-900 text-yellow-300 border-yellow-700",
-  Low: "bg-red-900 text-red-300 border-red-700",
-};
-
 const CLUSTER_COLORS = [
-  "#60a5fa", // blue-400
-  "#a78bfa", // violet-400
-  "#34d399", // emerald-400
-  "#fb923c", // orange-400
-  "#f472b6", // pink-400
-  "#facc15", // yellow-400
+  "#3b82f6",
+  "#8b5cf6",
+  "#22c55e",
+  "#eab308",
+  "#ec4899",
+  "#06b6d4",
 ];
+
+// ─── Visual Helpers ───────────────────────────────────────────────────────────
+
+function viabilityToTier(v: string): "high" | "medium" | "low" {
+  const lower = v.toLowerCase();
+  if (lower.startsWith("high")) return "high";
+  if (lower.startsWith("medium")) return "medium";
+  return "low";
+}
+
+function Sparkline({
+  series,
+  color,
+  width = 192,
+  height = 36,
+}: {
+  series: number[];
+  color: string;
+  width?: number;
+  height?: number;
+}) {
+  const max = Math.max(...series);
+  const min = Math.min(...series);
+  const range = max - min || 1;
+  const step = width / (series.length - 1);
+  const pts = series
+    .map((v, i) => `${i * step},${height - ((v - min) / range) * height}`)
+    .join(" ");
+  const area = `0,${height} ${pts} ${width},${height}`;
+  const gradId = `spark-${color.replace("#", "")}`;
+  const lastY = height - ((series[series.length - 1] - min) / range) * height;
+  return (
+    <svg width={width} height={height} style={{ display: "block" }}>
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill={`url(#${gradId})`} />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" />
+      <circle
+        cx={width}
+        cy={lastY}
+        r="2.5"
+        fill={color}
+        stroke="var(--surface)"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,31 +181,48 @@ function buildGraphData(clusters: Cluster[], citationLinks: CitationLink[]) {
 
 function Stepper({ stepIdx }: { stepIdx: number }) {
   return (
-    <div className="w-full max-w-lg mx-auto">
+    <div style={{ width: "100%", maxWidth: 480, margin: "0 auto" }}>
       {STEPS.map((step, idx) => {
         const isDone = idx < stepIdx;
         const isActive = idx === stepIdx;
-        const isPending = idx > stepIdx;
 
         return (
-          <div key={step.key} className="flex items-start gap-4 mb-4">
-            {/* Circle indicator */}
-            <div className="flex flex-col items-center">
+          <div
+            key={step.key}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 16,
+              marginBottom: 16,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
               <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center border-2 shrink-0 ${
-                  isDone
-                    ? "bg-green-500 border-green-500"
-                    : isActive
-                      ? "border-blue-400 bg-transparent"
-                      : "border-gray-700 bg-transparent"
-                }`}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  border: `2px solid ${isDone ? "var(--green)" : isActive ? "var(--blue)" : "var(--border-strong)"}`,
+                  background: isDone ? "var(--green)" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
               >
                 {isDone ? (
                   <svg
-                    className="w-4 h-4 text-white"
-                    fill="none"
+                    width="12"
+                    height="12"
                     viewBox="0 0 24 24"
-                    stroke="currentColor"
+                    fill="none"
+                    stroke="white"
                     strokeWidth={3}
                   >
                     <path
@@ -175,31 +232,48 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
                     />
                   </svg>
                 ) : isActive ? (
-                  <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse" />
+                  <div
+                    style={{
+                      width: 10,
+                      height: 10,
+                      background: "var(--blue)",
+                      borderRadius: "50%",
+                    }}
+                    className="animate-pulse"
+                  />
                 ) : (
-                  <div className="w-2 h-2 bg-gray-700 rounded-full" />
+                  <div
+                    style={{
+                      width: 8,
+                      height: 8,
+                      background: "var(--border-strong)",
+                      borderRadius: "50%",
+                    }}
+                  />
                 )}
               </div>
               {idx < STEPS.length - 1 && (
                 <div
-                  className={`w-0.5 h-4 mt-1 ${
-                    isDone ? "bg-green-500" : "bg-gray-700"
-                  }`}
+                  style={{
+                    width: 1,
+                    height: 16,
+                    marginTop: 4,
+                    background: isDone ? "var(--green)" : "var(--border)",
+                  }}
                 />
               )}
             </div>
-
-            {/* Label */}
             <p
-              className={`text-sm pt-1.5 ${
-                isDone
-                  ? "text-gray-500 line-through"
+              style={{
+                fontSize: 14,
+                paddingTop: 4,
+                color: isDone
+                  ? "var(--text-3)"
                   : isActive
-                    ? "text-blue-300 font-medium"
-                    : isPending
-                      ? "text-gray-600"
-                      : "text-gray-400"
-              }`}
+                    ? "var(--blue)"
+                    : "var(--border-strong)",
+                textDecoration: isDone ? "line-through" : "none",
+              }}
             >
               {step.label}
             </p>
@@ -212,209 +286,419 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
 
 function WhiteSpaceCard({
   gap,
+  index,
   idea,
   isIdeating,
   onIdeate,
 }: {
   gap: WhiteSpaceGap;
+  index: number;
   idea?: WhiteSpaceIdea;
   isIdeating: boolean;
   onIdeate: () => void;
 }) {
-  const badgeStyle =
-    VIABILITY_STYLES[gap.viability] ??
-    "bg-gray-800 text-gray-300 border-gray-600";
+  const tier = viabilityToTier(gap.viability);
+  const badgeClass =
+    tier === "high" ? "green" : tier === "medium" ? "yellow" : "red";
+  const barWidth = tier === "high" ? "85%" : tier === "medium" ? "55%" : "25%";
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 flex flex-col gap-3 print:break-inside-avoid">
-      <div className="flex items-start justify-between gap-4">
-        <h3 className="text-white font-semibold text-base leading-snug">
-          {gap.title}
-        </h3>
-        <span
-          className={`text-xs px-2 py-1 rounded border shrink-0 ${badgeStyle}`}
-        >
-          {gap.viability}
-        </span>
+    <article className="pm-ws-card print:break-inside-avoid" data-tier={tier}>
+      <div className="pm-ws-head">
+        <div>
+          <div className="pm-ws-eyebrow">
+            GAP {String(index + 1).padStart(2, "0")} · White Space
+          </div>
+          <h3 className="pm-ws-title">{gap.title}</h3>
+        </div>
+        <span className={`pm-badge ${badgeClass}`}>{gap.viability}</span>
       </div>
-      <p className="text-gray-400 text-sm leading-relaxed">{gap.description}</p>
-
-      {!idea && (
-        <button
-          onClick={onIdeate}
-          disabled={isIdeating}
-          className="self-start mt-1 text-xs border border-purple-500 text-purple-400 hover:bg-purple-500/10 px-3 py-1 rounded-lg transition-colors disabled:opacity-50"
-        >
-          {isIdeating ? (
-            <span className="flex items-center gap-1">
-              <svg
-                className="animate-spin h-3 w-3"
-                viewBox="0 0 24 24"
-                fill="none"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8v8z"
-                />
-              </svg>
-              Generating...
-            </span>
-          ) : (
-            "Generate Idea ✨"
-          )}
-        </button>
-      )}
+      <p className="pm-ws-desc">{gap.description}</p>
+      <div className="pm-ws-foot">
+        <div className="pm-ws-score">
+          <span style={{ color: "var(--text-3)" }}>viability</span>
+          <div className="pm-ws-bar">
+            <i style={{ width: barWidth }}></i>
+          </div>
+        </div>
+        {!idea && (
+          <button
+            onClick={onIdeate}
+            disabled={isIdeating}
+            className="pm-btn purple sm"
+          >
+            {isIdeating ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <svg
+                  className="animate-spin"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    opacity="0.25"
+                  />
+                  <path
+                    fill="currentColor"
+                    opacity="0.75"
+                    d="M4 12a8 8 0 018-8v8z"
+                  />
+                </svg>
+                Generating...
+              </span>
+            ) : (
+              "Generate idea ✨"
+            )}
+          </button>
+        )}
+      </div>
 
       {idea && (
-        <div className="bg-purple-950/30 border border-purple-800/50 rounded-lg p-4 mt-1">
-          <p className="font-semibold text-purple-300">{idea.invention_name}</p>
-          <p className="text-sm text-gray-300 mt-1">{idea.one_liner}</p>
-          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+        <div
+          style={{
+            background: "rgba(139,92,246,0.08)",
+            border: "1px solid rgba(139,92,246,0.3)",
+            borderRadius: 10,
+            padding: 16,
+            marginTop: 12,
+          }}
+        >
+          <p style={{ fontWeight: 600, color: "var(--purple)" }}>
+            {idea.invention_name}
+          </p>
+          <p style={{ fontSize: 13, color: "var(--text-2)", marginTop: 4 }}>
+            {idea.one_liner}
+          </p>
+          <p
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              marginTop: 8,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
             Mechanism
           </p>
-          <p className="text-xs text-gray-400">{idea.mechanism}</p>
-          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+          <p style={{ fontSize: 12, color: "var(--text-2)" }}>
+            {idea.mechanism}
+          </p>
+          <p
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              marginTop: 8,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
             Key Differentiators
           </p>
-          <ul className="list-disc list-inside text-xs text-gray-400">
+          <ul style={{ fontSize: 12, color: "var(--text-2)", paddingLeft: 16 }}>
             {idea.key_differentiators.map((d, i) => (
               <li key={i}>{d}</li>
             ))}
           </ul>
-          <p className="text-xs text-gray-500 mt-2 uppercase tracking-wide">
+          <p
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              marginTop: 8,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
             Why Novel
           </p>
-          <p className="text-xs text-gray-400">{idea.why_novel}</p>
+          <p style={{ fontSize: 12, color: "var(--text-2)" }}>
+            {idea.why_novel}
+          </p>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
-function TrendCard({ cluster }: { cluster: Cluster }) {
+function TrendCard({ cluster, color }: { cluster: Cluster; color: string }) {
   const trend = cluster.filing_trend ?? [];
-  const W = 120,
-    H = 50,
-    barW = 4,
-    gap = 2;
-  const maxCount = Math.max(...trend.map((t) => t.count), 1);
-  const latestYear = trend[trend.length - 1]?.year;
-  const totalBarSpace = trend.length * (barW + gap) - gap;
-  const startX = (W - totalBarSpace) / 2;
-
-  const firstAvg =
-    trend.length >= 2 ? (trend[0].count + trend[1].count) / 2 : 0;
-  const lastAvg =
-    trend.length >= 2
-      ? (trend[trend.length - 2].count + trend[trend.length - 1].count) / 2
-      : 0;
-  const indicator =
-    lastAvg > firstAvg * 1.2
-      ? { label: "↑ Accelerating", cls: "text-green-400" }
-      : lastAvg < firstAvg * 0.8
-        ? { label: "↓ Slowing", cls: "text-gray-500" }
-        : { label: "→ Stable", cls: "text-yellow-400" };
+  const series = trend.map((t) => t.count);
+  const delta = series[series.length - 1] - series[0];
+  const direction =
+    delta > series[0] * 0.2 ? "up" : delta < -series[0] * 0.2 ? "down" : "flat";
+  const pct = series[0] > 0 ? Math.round((delta / series[0]) * 100) : 0;
+  const deltaLabel =
+    direction === "up" ? `+${pct}%` : direction === "down" ? `${pct}%` : "0%";
+  const firstYear = trend[0]?.year;
+  const lastYear = trend[trend.length - 1]?.year;
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-xl p-4 min-w-[180px] flex flex-col gap-2">
-      <p className="text-white text-xs font-medium truncate">
-        {cluster.theme_name.length > 30
-          ? cluster.theme_name.slice(0, 30) + "…"
-          : cluster.theme_name}
-      </p>
-      <svg width={W} height={H} className="overflow-visible">
-        {trend.map((t, i) => {
-          const barH = Math.max(2, Math.round((t.count / maxCount) * H));
-          const x = startX + i * (barW + gap);
-          return (
-            <rect
-              key={t.year}
-              x={x}
-              y={H - barH}
-              width={barW}
-              height={barH}
-              fill={t.year === latestYear ? "#60a5fa" : "#3b82f6"}
-              rx={1}
-            />
-          );
-        })}
-      </svg>
-      <p className="text-xs text-gray-500">
-        {trend[0].year} → {latestYear}
-      </p>
-      <p className={`text-xs font-medium ${indicator.cls}`}>
-        {indicator.label}
-      </p>
+    <div className="pm-trend-card">
+      <div className="pm-trend-head">
+        <div className="pm-trend-name">
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: color,
+              boxShadow: `0 0 6px ${color}`,
+              display: "inline-block",
+              flexShrink: 0,
+            }}
+          />
+          {cluster.theme_name}
+        </div>
+        <span className={`pm-trend-arrow ${direction}`}>
+          {direction === "up" ? "↗" : direction === "down" ? "↘" : "→"}{" "}
+          {deltaLabel}
+        </span>
+      </div>
+      <Sparkline series={series} color={color} width={192} height={36} />
+      <div className="pm-trend-foot">
+        <span>
+          {firstYear} → {lastYear}
+        </span>
+        <span>filing trend</span>
+      </div>
     </div>
   );
 }
 
-function ClusterCard({ cluster }: { cluster: Cluster }) {
+function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
+  const maxCount = Math.max(
+    ...(cluster.top_assignees ?? []).map((a) => a.count),
+    1,
+  );
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 flex flex-col gap-3 print:break-inside-avoid">
-      <div className="flex items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-        <h3 className="text-white font-semibold text-sm">
-          {cluster.theme_name}
-        </h3>
+    <article
+      className="pm-cluster print:break-inside-avoid"
+      style={{ "--cdot": color } as React.CSSProperties}
+    >
+      <div className="pm-cluster-head">
+        <span className="pm-cluster-dot"></span>
+        <span className="pm-cluster-name">{cluster.theme_name}</span>
+        <span className="pm-cluster-meta">{cluster.patent_ids.length} pat</span>
       </div>
-      <p className="text-gray-400 text-xs leading-relaxed">
-        {cluster.description}
-      </p>
+      <p className="pm-cluster-desc">{cluster.description}</p>
       {cluster.ipc_codes && cluster.ipc_codes.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-gray-500">Classifications</span>
-          <div className="flex flex-wrap gap-1">
-            {cluster.ipc_codes.slice(0, 2).map((code) => (
-              <span
-                key={code}
-                className="text-xs font-mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded border border-gray-700"
-              >
+        <>
+          <div className="pm-cluster-section-label">IPC / CPC</div>
+          <div className="pm-chip-row">
+            {cluster.ipc_codes.map((code) => (
+              <span key={code} className="pm-chip ipc">
                 {code}
               </span>
             ))}
           </div>
-        </div>
+        </>
       )}
       {cluster.top_assignees && cluster.top_assignees.length > 0 && (
-        <div className="flex flex-col gap-1">
-          <span className="text-xs text-gray-500">Key players</span>
-          <div className="flex flex-wrap gap-2">
-            {cluster.top_assignees.slice(0, 3).map((a) => (
-              <div key={a.name} className="flex items-center gap-1">
-                <span className="text-xs text-gray-300">
-                  {a.name.length > 24 ? a.name.slice(0, 24) + "…" : a.name}
-                </span>
-                <span className="text-xs text-gray-500 bg-gray-800 px-1.5 rounded">
-                  ×{a.count}
-                </span>
+        <>
+          <div className="pm-cluster-section-label">Top assignees</div>
+          <div className="pm-players">
+            {cluster.top_assignees.map((a) => (
+              <div key={a.name}>
+                <div className="pm-player">
+                  <span className="pm-player-name">{a.name}</span>
+                  <span className="pm-player-count">{a.count} patents</span>
+                </div>
+                <div className="pm-player-bar">
+                  <i style={{ width: `${(a.count / maxCount) * 100}%` }}></i>
+                </div>
               </div>
             ))}
           </div>
-        </div>
+        </>
       )}
-      <div className="flex flex-wrap gap-1.5 mt-1">
-        {cluster.patent_ids.map((pid) => (
+      <div className="pm-cluster-foot">
+        {cluster.patent_ids.slice(0, 4).map((pid) => (
           <a
             key={pid}
             href={`https://patents.google.com/patent/${pid}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs font-mono text-blue-400 hover:text-blue-300 bg-gray-800 px-2 py-1 rounded border border-gray-700 hover:border-blue-700 transition-colors"
+            className="pm-chip tiny"
           >
             {pid}
           </a>
         ))}
       </div>
+    </article>
+  );
+}
+
+interface SimLink {
+  source: string;
+  target: string;
+  strength: number;
+}
+
+function CitationGraphSVG({
+  nodes,
+  links,
+  onNodeClick,
+}: {
+  nodes: GraphNode[];
+  links: SimLink[];
+  onNodeClick: (node: GraphNode) => void;
+}) {
+  const HEIGHT = 400;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(800);
+  const [positions, setPositions] = useState<
+    Map<string, { x: number; y: number }>
+  >(new Map());
+  const rafRef = useRef<number>(0);
+  const iterRef = useRef(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    setWidth(el.offsetWidth || 800);
+    const ro = new ResizeObserver(() => setWidth(el.offsetWidth || 800));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    cancelAnimationFrame(rafRef.current);
+    iterRef.current = 0;
+
+    const W = width;
+    const H = HEIGHT;
+    const MAX_ITER = 250;
+    const n = nodes.length;
+
+    const idxMap = new Map<string, number>(
+      nodes.map((node, i) => [node.id, i]),
+    );
+
+    const px = new Float64Array(n);
+    const py = new Float64Array(n);
+    const vx = new Float64Array(n);
+    const vy = new Float64Array(n);
+    nodes.forEach((_, i) => {
+      const angle = (i / n) * 2 * Math.PI;
+      const r = Math.min(W, H) * 0.3;
+      px[i] = W / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 10;
+      py[i] = H / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 10;
+    });
+
+    const edgeList: { si: number; ti: number; strength: number }[] = [];
+    links.forEach((l) => {
+      const si = idxMap.get(l.source);
+      const ti = idxMap.get(l.target);
+      if (si !== undefined && ti !== undefined) {
+        edgeList.push({ si, ti, strength: l.strength });
+      }
+    });
+
+    const REPULSION = 1500;
+    const SPRING_K = 0.04;
+    const SPRING_REST = 80;
+    const CENTER_K = 0.008;
+    const DAMPING = 0.8;
+    const fx = new Float64Array(n);
+    const fy = new Float64Array(n);
+
+    function tick() {
+      if (iterRef.current >= MAX_ITER) return;
+      iterRef.current++;
+
+      fx.fill(0);
+      fy.fill(0);
+
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const dx = px[j] - px[i];
+          const dy = py[j] - py[i];
+          const d2 = dx * dx + dy * dy + 1;
+          const d = Math.sqrt(d2);
+          const f = REPULSION / d2;
+          fx[i] -= f * (dx / d);
+          fy[i] -= f * (dy / d);
+          fx[j] += f * (dx / d);
+          fy[j] += f * (dy / d);
+        }
+      }
+
+      for (const { si, ti, strength } of edgeList) {
+        const dx = px[ti] - px[si];
+        const dy = py[ti] - py[si];
+        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        const f = SPRING_K * (d - SPRING_REST) * strength;
+        fx[si] += f * (dx / d);
+        fy[si] += f * (dy / d);
+        fx[ti] -= f * (dx / d);
+        fy[ti] -= f * (dy / d);
+      }
+
+      for (let i = 0; i < n; i++) {
+        fx[i] += (W / 2 - px[i]) * CENTER_K;
+        fy[i] += (H / 2 - py[i]) * CENTER_K;
+        vx[i] = (vx[i] + fx[i]) * DAMPING;
+        vy[i] = (vy[i] + fy[i]) * DAMPING;
+        px[i] = Math.max(8, Math.min(W - 8, px[i] + vx[i]));
+        py[i] = Math.max(8, Math.min(H - 8, py[i] + vy[i]));
+      }
+
+      const posMap = new Map<string, { x: number; y: number }>();
+      nodes.forEach((node, i) => posMap.set(node.id, { x: px[i], y: py[i] }));
+      setPositions(new Map(posMap));
+
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [nodes, links, width]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="w-full h-[400px] rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
+    >
+      <svg width={width} height={HEIGHT} style={{ display: "block" }}>
+        {links.map((link, i) => {
+          const src = positions.get(link.source);
+          const tgt = positions.get(link.target);
+          if (!src || !tgt) return null;
+          return (
+            <line
+              key={i}
+              x1={src.x}
+              y1={src.y}
+              x2={tgt.x}
+              y2={tgt.y}
+              stroke="rgba(100,116,139,0.4)"
+              strokeWidth={link.strength * 2}
+            />
+          );
+        })}
+        {nodes.map((node) => {
+          const pos = positions.get(node.id);
+          if (!pos) return null;
+          const color = CLUSTER_COLORS[node.clusterIdx % CLUSTER_COLORS.length];
+          return (
+            <g
+              key={node.id}
+              transform={`translate(${pos.x},${pos.y})`}
+              onClick={() => onNodeClick(node)}
+              style={{ cursor: "pointer" }}
+            >
+              <circle r={5} fill={color} />
+              <title>{node.id}</title>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -428,46 +712,13 @@ function PatentGraphSection({
   citationLinks: CitationLink[];
   onNodeClick: (node: GraphNode) => void;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(800);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    setWidth(el.offsetWidth);
-    const ro = new ResizeObserver(() => setWidth(el.offsetWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const graphData = buildGraphData(clusters, citationLinks);
-
   return (
-    <div
-      ref={containerRef}
-      className="w-full h-[400px] rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
-    >
-      <ForceGraph2D
-        graphData={graphData}
-        width={width}
-        height={400}
-        backgroundColor="transparent"
-        nodeColor={(node) => {
-          const n = node as GraphNode;
-          return CLUSTER_COLORS[n.clusterIdx % CLUSTER_COLORS.length];
-        }}
-        nodeVal={4}
-        nodeLabel="id"
-        linkWidth={(link) => {
-          const l = link as { strength: number };
-          return l.strength * 2;
-        }}
-        linkColor={() => "rgba(100,116,139,0.4)"}
-        d3VelocityDecay={0.3}
-        cooldownTime={2000}
-        onNodeClick={(node) => onNodeClick(node as GraphNode)}
-      />
-    </div>
+    <CitationGraphSVG
+      nodes={graphData.nodes}
+      links={graphData.links}
+      onNodeClick={onNodeClick}
+    />
   );
 }
 
@@ -498,34 +749,85 @@ function NodeSidePanel({
   return (
     <div
       ref={panelRef}
-      className="fixed right-4 top-1/4 w-72 bg-gray-900 border border-gray-700 rounded-xl p-5 shadow-2xl z-50"
+      style={{
+        position: "fixed",
+        right: 16,
+        top: "25%",
+        width: 288,
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: 12,
+        padding: 20,
+        boxShadow: "0 24px 48px rgba(0,0,0,0.5)",
+        zIndex: 50,
+      }}
     >
-      <div className="flex items-start justify-between mb-4">
-        <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          marginBottom: 16,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 11,
+            color: "var(--text-3)",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+          }}
+        >
           Patent
         </span>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-gray-300 transition-colors text-lg leading-none"
           aria-label="Close"
+          style={{
+            color: "var(--text-3)",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            fontSize: 18,
+            lineHeight: 1,
+            padding: 0,
+          }}
         >
           ×
         </button>
       </div>
-      <p className="font-mono text-white text-sm font-semibold mb-3 break-all">
+      <p
+        style={{
+          fontFamily: "var(--font-mono)",
+          color: "var(--text)",
+          fontSize: 13,
+          fontWeight: 600,
+          marginBottom: 12,
+          wordBreak: "break-all",
+        }}
+      >
         {node.id}
       </p>
       {cluster && (
-        <div className="mb-4">
-          <span className="text-xs text-gray-500">Cluster</span>
-          <p className="text-gray-300 text-xs mt-1">{cluster.theme_name}</p>
+        <div style={{ marginBottom: 16 }}>
+          <span style={{ fontSize: 11, color: "var(--text-3)" }}>Cluster</span>
+          <p style={{ color: "var(--text-2)", fontSize: 12, marginTop: 4 }}>
+            {cluster.theme_name}
+          </p>
         </div>
       )}
       <a
         href={`https://patents.google.com/patent/${node.id}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="block text-blue-400 hover:text-blue-300 text-xs font-medium transition-colors"
+        style={{
+          display: "block",
+          color: "var(--blue)",
+          fontSize: 12,
+          fontWeight: 500,
+          textDecoration: "none",
+        }}
       >
         View on Google Patents →
       </a>
@@ -682,8 +984,24 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Init UI (brief spinner while first poll resolves) ──
   if (phase === "init") {
     return (
-      <main className="min-h-[calc(100vh-65px)] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+      <main
+        style={{
+          minHeight: "calc(100vh - 65px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            border: "2px solid var(--blue)",
+            borderTopColor: "transparent",
+            borderRadius: "50%",
+            animation: "spin 0.7s linear infinite",
+          }}
+        />
       </main>
     );
   }
@@ -697,12 +1015,35 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     );
 
     return (
-      <main className="min-h-[calc(100vh-65px)] flex flex-col items-center justify-center px-4 py-16">
-        <div className="w-full max-w-2xl text-center mb-10">
-          <h1 className="text-2xl font-bold text-white mb-2">
+      <main
+        style={{
+          minHeight: "calc(100vh - 65px)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "64px 16px",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 672,
+            width: "100%",
+            textAlign: "center",
+            marginBottom: 40,
+          }}
+        >
+          <h1
+            style={{
+              fontSize: 24,
+              fontWeight: 700,
+              color: "var(--text)",
+              marginBottom: 8,
+            }}
+          >
             Analyzing your invention...
           </h1>
-          <p className="text-gray-500 text-sm">
+          <p style={{ color: "var(--text-3)", fontSize: 14 }}>
             This usually takes 15–60 seconds.
           </p>
         </div>
@@ -714,14 +1055,41 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Loading results from Supabase ──
   if (phase === "loading_results") {
     return (
-      <main className="min-h-[calc(100vh-65px)] flex items-center justify-center px-4">
-        <div className="text-center max-w-lg">
-          <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-5" />
-          <h2 className="text-white font-semibold text-lg mb-2">
+      <main
+        style={{
+          minHeight: "calc(100vh - 65px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 16px",
+        }}
+      >
+        <div style={{ textAlign: "center", maxWidth: 480 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              border: "2px solid var(--blue)",
+              borderTopColor: "transparent",
+              borderRadius: "50%",
+              animation: "spin 0.7s linear infinite",
+              margin: "0 auto 20px",
+            }}
+          />
+          <h2
+            style={{
+              color: "var(--text)",
+              fontWeight: 600,
+              fontSize: 18,
+              marginBottom: 8,
+            }}
+          >
             Compiling your results...
           </h2>
           {inventionIdea && (
-            <p className="text-gray-500 text-sm leading-relaxed">
+            <p
+              style={{ color: "var(--text-3)", fontSize: 14, lineHeight: 1.6 }}
+            >
               &ldquo;
               {inventionIdea.length > 100
                 ? inventionIdea.slice(0, 100) + "..."
@@ -737,17 +1105,43 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Error UI ──
   if (phase === "failed") {
     return (
-      <main className="min-h-[calc(100vh-65px)] flex items-center justify-center px-4">
-        <div className="max-w-md w-full bg-red-950 border border-red-800 rounded-xl p-8 text-center">
-          <div className="text-red-400 text-4xl mb-4">✕</div>
-          <h2 className="text-white font-bold text-lg mb-2">Analysis Failed</h2>
-          <p className="text-red-300 text-sm mb-6">
+      <main
+        style={{
+          minHeight: "calc(100vh - 65px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "0 16px",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 448,
+            width: "100%",
+            background: "color-mix(in srgb, var(--red) 10%, var(--bg))",
+            border: "1px solid color-mix(in srgb, var(--red) 40%, transparent)",
+            borderRadius: 12,
+            padding: 32,
+            textAlign: "center",
+          }}
+        >
+          <div style={{ color: "var(--red)", fontSize: 36, marginBottom: 16 }}>
+            ✕
+          </div>
+          <h2
+            style={{
+              color: "var(--text)",
+              fontWeight: 700,
+              fontSize: 18,
+              marginBottom: 8,
+            }}
+          >
+            Analysis Failed
+          </h2>
+          <p style={{ color: "var(--text-2)", fontSize: 14, marginBottom: 24 }}>
             {errorMessage ?? "An unknown error occurred."}
           </p>
-          <a
-            href="/"
-            className="inline-block bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm px-4 py-2 rounded-lg transition-colors"
-          >
+          <a href="/" className="pm-btn sm">
             ← Try again
           </a>
         </div>
@@ -763,52 +1157,74 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     ? searchResult.clusters
     : [];
   const citationLinks = searchResult.citation_links ?? [];
+  const totalPatents = clusters.flatMap((c) => c.patent_ids).length;
 
   return (
-    <main className="min-h-[calc(100vh-65px)] px-4 py-10 max-w-6xl mx-auto">
-      {/* Header */}
-      <header className="mb-10">
-        <p className="text-gray-500 text-sm mb-2">
-          {new Date(searchMeta.created_at).toLocaleDateString("en-US", {
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </p>
-        <h1 className="text-2xl font-bold text-white mb-4 max-w-3xl leading-snug">
-          &ldquo;
-          {searchMeta.invention_idea.length > 140
-            ? searchMeta.invention_idea.slice(0, 140) + "..."
-            : searchMeta.invention_idea}
-          &rdquo;
-        </h1>
-        <div className="flex gap-2 flex-wrap">
-          {clusters.length > 0 && (
-            <span className="bg-blue-900 text-blue-300 text-xs px-3 py-1 rounded-full border border-blue-700">
-              {clusters.length} Prior Art Cluster
-              {clusters.length !== 1 ? "s" : ""}
-            </span>
-          )}
-          {gaps.length > 0 && (
-            <span className="bg-purple-900 text-purple-300 text-xs px-3 py-1 rounded-full border border-purple-700">
-              {gaps.length} White Space Opportunit
-              {gaps.length !== 1 ? "ies" : "y"}
-            </span>
-          )}
+    <div className="pm" style={{ minHeight: "100%" }}>
+      {/* Sticky header bar */}
+      <div className="pm-sticky-bar">
+        <div className="pm-sticky-left">
+          <a href="/dashboard" className="pm-sticky-back">
+            ← Dashboard
+          </a>
+          <span style={{ color: "var(--border-strong)" }}>/</span>
+          <span className="pm-sticky-title" title={searchMeta.invention_idea}>
+            {searchMeta.invention_idea.length > 60
+              ? searchMeta.invention_idea.slice(0, 60) + "..."
+              : searchMeta.invention_idea}
+          </span>
         </div>
-      </header>
+        <div className="pm-sticky-meta print:hidden">
+          <span className="pm-pill">
+            <span className="dot" style={{ background: "var(--blue)" }}></span>
+            {clusters.length} clusters
+          </span>
+          <span className="pm-pill">
+            <span
+              className="dot"
+              style={{ background: "var(--purple)" }}
+            ></span>
+            {gaps.length} gaps
+          </span>
+          <span className="pm-pill">
+            <span className="dot" style={{ background: "var(--green)" }}></span>
+            {totalPatents} patents
+          </span>
+          <span
+            style={{
+              width: 1,
+              height: 16,
+              background: "var(--border)",
+              margin: "0 4px",
+            }}
+          ></span>
+          <button className="pm-btn sm print:hidden" onClick={handlePrint}>
+            ⤓ Export
+          </button>
+          <button className="pm-btn sm print:hidden" onClick={handleCopyLink}>
+            {copied ? "Copied!" : "Share"}
+          </button>
+        </div>
+      </div>
 
-      {/* Section 1: White Space */}
+      {/* Section 01: White Space Opportunities */}
       {gaps.length > 0 && (
-        <section className="mb-12">
-          <h2 className="text-xl font-bold text-white mb-5">
-            White Space Opportunities
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <section className="pm-section">
+          <div className="pm-section-head">
+            <div className="pm-section-title">
+              <span className="num">01</span>
+              <h2>White space opportunities</h2>
+            </div>
+            <div className="pm-section-aside">
+              <span>{gaps.length} gaps identified · ranked by viability</span>
+            </div>
+          </div>
+          <div className="pm-ws-grid">
             {gaps.map((gap, idx) => (
               <WhiteSpaceCard
-                key={idx}
+                key={gap.title}
                 gap={gap}
+                index={idx}
                 idea={ideas[gap.title]}
                 isIdeating={ideatingId === gap.title}
                 onIdeate={() => handleIdeate(gap)}
@@ -818,52 +1234,114 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         </section>
       )}
 
-      {/* Section 1.5: Technology Trends */}
+      {/* Section 02: Technology Trends */}
       {clusters.some((c) => (c.filing_trend ?? []).length >= 2) && (
-        <section className="mb-12">
-          <h2 className="text-xl font-bold text-white mb-5">
-            Technology Trends
-          </h2>
-          <div className="flex flex-row gap-4 overflow-x-auto pb-2">
+        <>
+          <section className="pm-section" style={{ paddingBottom: 0 }}>
+            <div className="pm-section-head">
+              <div className="pm-section-title">
+                <span className="num">02</span>
+                <h2>Technology trends</h2>
+              </div>
+              <div className="pm-section-aside">
+                <span style={{ fontFamily: "var(--font-mono)" }}>
+                  filing · rolling
+                </span>
+              </div>
+            </div>
+          </section>
+          <div
+            className="pm-trends"
+            style={{
+              paddingLeft: 32,
+              paddingRight: 32,
+              maxWidth: 1320,
+              margin: "0 auto",
+            }}
+          >
             {clusters
               .filter((c) => (c.filing_trend ?? []).length >= 2)
               .map((cluster, idx) => (
-                <TrendCard key={idx} cluster={cluster} />
+                <TrendCard
+                  key={cluster.theme_name}
+                  cluster={cluster}
+                  color={CLUSTER_COLORS[idx % CLUSTER_COLORS.length]}
+                />
               ))}
           </div>
-        </section>
+        </>
       )}
 
-      {/* Section 2: Prior Art Clusters */}
+      {/* Section 03: Prior Art Clusters */}
       {clusters.length > 0 && (
-        <section className="mb-12">
-          <h2 className="text-xl font-bold text-white mb-5">
-            Prior Art Clusters
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <section className="pm-section">
+          <div className="pm-section-head">
+            <div className="pm-section-title">
+              <span className="num">03</span>
+              <h2>Prior art clusters</h2>
+            </div>
+            <div className="pm-section-aside">
+              <span>{clusters.length} clusters</span>
+            </div>
+          </div>
+          <div className="pm-cluster-grid">
             {clusters.map((cluster, idx) => (
-              <ClusterCard key={idx} cluster={cluster} />
+              <ClusterCard
+                key={cluster.theme_name}
+                cluster={cluster}
+                color={CLUSTER_COLORS[idx % CLUSTER_COLORS.length]}
+              />
             ))}
           </div>
         </section>
       )}
 
-      {/* Section 2.5: Patent Relationship Graph */}
+      {/* Section 04: Patent Relationship Graph */}
       {citationLinks.length > 0 && (
-        <section className="mb-12 print:hidden">
-          <h2 className="text-xl font-bold text-white mb-2">
-            Patent Relationship Graph
-          </h2>
-          <p className="text-gray-500 text-sm mb-5">
-            Click a node to see patent details. Node colors match clusters
-            above.
-          </p>
-          <PatentGraphSection
-            clusters={clusters}
-            citationLinks={citationLinks}
-            onNodeClick={setSelectedNode}
-          />
-        </section>
+        <>
+          <section
+            className="pm-section print:hidden"
+            style={{ paddingBottom: 0 }}
+          >
+            <div className="pm-section-head">
+              <div className="pm-section-title">
+                <span className="num">04</span>
+                <h2>Patent relationship graph</h2>
+              </div>
+              <div className="pm-section-aside">
+                <span>{citationLinks.length} inferred relationships</span>
+              </div>
+            </div>
+          </section>
+          <div className="pm-graph-panel print:hidden">
+            <div className="pm-graph-grid"></div>
+            <div className="pm-graph-head">
+              <div className="pm-graph-legend">
+                {clusters.map((c, i) => (
+                  <div key={c.theme_name} className="pm-graph-legend-row">
+                    <span
+                      className="ldot"
+                      style={{
+                        background: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
+                      }}
+                    ></span>
+                    {c.theme_name}
+                  </div>
+                ))}
+              </div>
+              <div className="pm-graph-controls">
+                <button className="pm-graph-ctl">+</button>
+                <button className="pm-graph-ctl">−</button>
+                <button className="pm-graph-ctl">⤢</button>
+              </div>
+            </div>
+            <PatentGraphSection
+              clusters={clusters}
+              citationLinks={citationLinks}
+              onNodeClick={setSelectedNode}
+            />
+          </div>
+        </>
       )}
 
       {/* Node side panel */}
@@ -875,64 +1353,70 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         />
       )}
 
-      {/* Section 3: Full Brief */}
-      <section className="mb-12">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl font-bold text-white">Full Analysis Brief</h2>
-          <div className="flex items-center gap-2 print:hidden">
-            <button
-              onClick={handleCopyLink}
-              className="text-sm text-gray-400 hover:text-gray-200 border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-              </svg>
+      {/* Section 05: Full Analysis Brief */}
+      <section className="pm-section">
+        <div className="pm-section-head">
+          <div className="pm-section-title">
+            <span className="num">05</span>
+            <h2>Full analysis brief</h2>
+          </div>
+          <div className="pm-section-aside print:hidden">
+            <button className="pm-btn sm" onClick={handleCopyLink}>
               {copied ? "Copied!" : "Copy link"}
             </button>
-            <button
-              onClick={handlePrint}
-              className="text-sm text-gray-400 hover:text-gray-200 border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              Print / Save PDF
+            <button className="pm-btn sm" onClick={handlePrint}>
+              ⤓ Print / Save PDF
             </button>
           </div>
         </div>
-        <div className="bg-gray-900 border border-gray-700 rounded-xl p-8 brief-content">
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 12,
+            padding: 32,
+          }}
+        >
           <MarkdownRenderer content={searchResult.white_space_analysis ?? ""} />
+        </div>
+        <div
+          className="print:block"
+          style={{
+            display: "none",
+            marginTop: 24,
+            color: "var(--text-3)",
+            fontSize: 12,
+          }}
+        >
+          Generated by PatentMapper — patentmapper.com — Not legal advice
         </div>
       </section>
 
-      {/* Print-only footer */}
-      <div className="print-footer hidden">
-        Generated by PatentMapper — patentmapper.com — Not legal advice
-      </div>
-
       {/* Footer nav */}
-      <div className="border-t border-gray-800 pt-8 flex flex-col sm:flex-row items-center gap-4 print:hidden">
-        <a
-          href="/"
-          className="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-8 rounded-xl transition-colors text-center"
-        >
+      <div
+        className="print:hidden"
+        style={{
+          borderTop: "1px solid var(--border)",
+          padding: "32px 32px",
+          display: "flex",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <a href="/" className="pm-btn">
           + New Analysis
         </a>
         <a
           href="/dashboard"
-          className="text-gray-500 hover:text-gray-300 text-sm transition-colors"
+          style={{
+            color: "var(--text-3)",
+            fontSize: 14,
+            textDecoration: "none",
+          }}
         >
           View all searches →
         </a>
       </div>
-    </main>
+    </div>
   );
 }

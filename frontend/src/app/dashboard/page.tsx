@@ -15,13 +15,8 @@ interface DashboardItem {
   current_step: string | null;
   error_message: string | null;
   inventionIdea: string | null;
+  created_at?: string | null;
 }
-
-const STATUS_STYLES: Record<string, string> = {
-  processing: "bg-yellow-900 text-yellow-300 border-yellow-700",
-  completed: "bg-green-900 text-green-300 border-green-700",
-  failed: "bg-red-900 text-red-300 border-red-700",
-};
 
 const STEP_LABELS: Record<string, string> = {
   queued: "Getting ready...",
@@ -34,12 +29,75 @@ const STEP_LABELS: Record<string, string> = {
   done: "Complete",
 };
 
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function StatusBadge({ status }: { status: DashboardItem["status"] }) {
+  if (status === "completed") {
+    return (
+      <span className="pm-badge green">
+        <span
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 999,
+            background: "currentColor",
+            display: "inline-block",
+          }}
+        />
+        Completed
+      </span>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <span className="pm-badge red">
+        <span
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 999,
+            background: "currentColor",
+            display: "inline-block",
+          }}
+        />
+        Failed
+      </span>
+    );
+  }
+  return (
+    <span className="pm-badge blue">
+      <span
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: "currentColor",
+          display: "inline-block",
+          animation: "pm-pulse 1.4s ease-in-out infinite",
+        }}
+      />
+      Running
+    </span>
+  );
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const { user, loading: authLoading } = useAuth();
   const [items, setItems] = useState<DashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showBanner, setShowBanner] = useState(false);
+  const [filter, setFilter] = useState<
+    "all" | "completed" | "processing" | "failed"
+  >("all");
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     if (searchParams.get("upgraded") === "true") {
@@ -55,10 +113,11 @@ function DashboardContent() {
     const client = createClient();
 
     if (user) {
-      // Logged in: query Supabase directly by user_id
       client
         .from("searches")
-        .select("id, invention_idea, status, current_step, error_message")
+        .select(
+          "id, invention_idea, status, current_step, error_message, created_at",
+        )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(20)
@@ -70,12 +129,12 @@ function DashboardContent() {
               current_step: (row.current_step as string | null) ?? null,
               error_message: (row.error_message as string | null) ?? null,
               inventionIdea: (row.invention_idea as string | null) ?? null,
+              created_at: (row.created_at as string | null) ?? null,
             })),
           );
           setLoading(false);
         });
     } else {
-      // Anonymous: use localStorage ids + API polling
       let ids: string[] = [];
       try {
         ids = JSON.parse(localStorage.getItem(JOBS_KEY) ?? "[]") as string[];
@@ -117,6 +176,7 @@ function DashboardContent() {
               current_step: s?.current_step ?? null,
               error_message: s?.error_message ?? null,
               inventionIdea: ideas[idx],
+              created_at: null,
             };
           }),
         );
@@ -125,115 +185,333 @@ function DashboardContent() {
     }
   }, [user, authLoading]);
 
+  const filtered = items.filter(
+    (item) =>
+      (filter === "all" || item.status === filter) &&
+      (q === "" ||
+        (item.inventionIdea ?? "").toLowerCase().includes(q.toLowerCase())),
+  );
+
+  const filterTabs: {
+    v: "all" | "completed" | "processing" | "failed";
+    n: string;
+  }[] = [
+    { v: "all", n: "All" },
+    { v: "completed", n: "Completed" },
+    { v: "processing", n: "Running" },
+    { v: "failed", n: "Failed" },
+  ];
+
   return (
-    <main className="min-h-[calc(100vh-65px)] px-4 py-10 max-w-3xl mx-auto">
+    <div className="pm" style={{ minHeight: "100%" }}>
       {showBanner && (
-        <div className="mb-6 bg-green-900 border border-green-700 rounded-xl px-5 py-3 flex items-center gap-3">
-          <span className="text-green-300 text-sm font-medium">
+        <div
+          style={{
+            maxWidth: 1200,
+            margin: "0 auto",
+            padding: "16px 32px 0",
+          }}
+        >
+          <div
+            style={{
+              background: "rgba(34,197,94,0.1)",
+              border: "1px solid rgba(34,197,94,0.25)",
+              borderRadius: 10,
+              padding: "12px 16px",
+              color: "#4ade80",
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
             Welcome to Pro! Unlimited analyses activated.
-          </span>
+          </div>
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-4 mb-8">
+      <div className="pm-dash-head">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">Your Searches</h1>
-          <p className="text-gray-500 text-sm">
+          <h1 className="pm-dash-h1">Your analyses</h1>
+          <div className="pm-dash-sub">
             {user
               ? "All past patent analyses from your account."
               : "All past patent analyses from this browser."}
-          </p>
+          </div>
         </div>
-        <Link
-          href="/"
-          className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors shrink-0"
-        >
-          + New Analysis
-        </Link>
-      </div>
-
-      {(loading || authLoading) && (
-        <div className="flex items-center gap-3 text-gray-500 text-sm py-8">
-          <div className="w-4 h-4 border-2 border-gray-600 border-t-gray-400 rounded-full animate-spin" />
-          Loading searches...
-        </div>
-      )}
-
-      {!loading && !authLoading && items.length === 0 && (
-        <div className="text-center py-20">
-          <p className="text-gray-500 text-lg mb-2">No searches yet.</p>
-          <p className="text-gray-600 text-sm mb-6">
-            Analyses you run will appear here.
-          </p>
-          {!user && (
-            <p className="text-gray-600 text-sm mb-4">
-              <Link
-                href="/auth"
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                Sign in
-              </Link>{" "}
-              to see your search history across devices.
-            </p>
-          )}
-          <Link
-            href="/"
-            className="text-blue-400 hover:text-blue-300 text-sm underline transition-colors"
-          >
-            Start your first analysis →
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link href="/" className="pm-btn primary">
+            + New analysis
           </Link>
         </div>
-      )}
+      </div>
 
-      {!loading && !authLoading && items.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {items.map((item) => {
-            const statusKey = item.status ?? "processing";
-            const badgeStyle =
-              STATUS_STYLES[statusKey] ??
-              "bg-gray-800 text-gray-400 border-gray-600";
-            const stepLabel = item.current_step
-              ? (STEP_LABELS[item.current_step] ?? item.current_step)
-              : null;
-
-            return (
-              <Link
-                key={item.id}
-                href={`/results/${item.id}`}
-                className="block bg-gray-900 border border-gray-700 rounded-xl p-4 hover:border-gray-500 transition-colors group"
+      <div className="pm-dash-stats">
+        <div className="pm-dash-stat">
+          <div className="label">Total searches</div>
+          <div className="value">
+            {loading || authLoading ? (
+              "—"
+            ) : (
+              <>
+                {items.length}
+                <span className="delta">this session</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="pm-dash-stat">
+          <div className="label">Patents indexed</div>
+          <div className="value">—</div>
+        </div>
+        <div className="pm-dash-stat">
+          <div className="label">Avg. runtime</div>
+          <div className="value">—</div>
+        </div>
+        <div className="pm-dash-stat">
+          <div className="label">Plan</div>
+          <div className="value" style={{ fontSize: 18 }}>
+            {user ? "Pro" : "Free"}
+            {user && (
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  color: "var(--text-3)",
+                }}
               >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-gray-200 text-sm font-medium group-hover:text-white transition-colors truncate">
-                      {item.inventionIdea
-                        ? item.inventionIdea.length > 80
-                          ? item.inventionIdea.slice(0, 80) + "…"
-                          : item.inventionIdea
-                        : `Job ${item.id.slice(0, 8)}…`}
-                    </p>
-                    {stepLabel && statusKey === "processing" && (
-                      <p className="text-gray-500 text-xs mt-0.5 truncate">
-                        {stepLabel}
-                      </p>
-                    )}
-                    {item.error_message && statusKey === "failed" && (
-                      <p className="text-red-500 text-xs mt-0.5 truncate">
-                        {item.error_message}
-                      </p>
-                    )}
-                  </div>
-                  <span
-                    className={`text-xs px-2.5 py-1 rounded border shrink-0 capitalize ${badgeStyle}`}
-                  >
-                    {statusKey}
-                  </span>
-                </div>
-              </Link>
+                {" "}
+                · $49/mo
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="pm-dash-toolbar">
+        <div className="pm-search-input">
+          <span
+            style={{ fontFamily: "var(--font-mono)", color: "var(--text-3)" }}
+          >
+            ⌕
+          </span>
+          <input
+            placeholder="Filter analyses by invention text…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              padding: "2px 5px",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--text-3)",
+            }}
+          >
+            /
+          </span>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            padding: 3,
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+          }}
+        >
+          {filterTabs.map((tab) => {
+            const count =
+              tab.v === "all"
+                ? items.length
+                : items.filter((r) => r.status === tab.v).length;
+            return (
+              <button
+                key={tab.v}
+                onClick={() => setFilter(tab.v)}
+                className={`pm-jur${filter === tab.v ? " active" : ""}`}
+                style={{ height: 28, fontSize: 12 }}
+              >
+                {tab.n}
+                <span
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--text-3)",
+                    marginLeft: 6,
+                    fontSize: 10,
+                  }}
+                >
+                  {count}
+                </span>
+              </button>
             );
           })}
         </div>
-      )}
-    </main>
+        <button className="pm-btn sm">
+          Sort: Newest <span style={{ fontFamily: "var(--font-mono)" }}>↓</span>
+        </button>
+      </div>
+
+      <div className="pm-table-wrap">
+        {(loading || authLoading) && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              color: "var(--text-3)",
+              fontSize: 13,
+              padding: "40px 0",
+            }}
+          >
+            <div
+              style={{
+                width: 14,
+                height: 14,
+                border: "2px solid var(--border)",
+                borderTopColor: "var(--text-2)",
+                borderRadius: "50%",
+                animation: "spin 0.8s linear infinite",
+              }}
+            />
+            Loading searches…
+          </div>
+        )}
+
+        {!loading && !authLoading && items.length === 0 && (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "80px 0",
+              color: "var(--text-3)",
+            }}
+          >
+            <p style={{ fontSize: 16, marginBottom: 8 }}>No searches yet.</p>
+            <p style={{ fontSize: 13, marginBottom: 20 }}>
+              Analyses you run will appear here.
+            </p>
+            {!user && (
+              <p style={{ fontSize: 13, marginBottom: 16 }}>
+                <Link
+                  href="/auth"
+                  style={{ color: "var(--blue)", textDecoration: "none" }}
+                >
+                  Sign in
+                </Link>{" "}
+                to see your search history across devices.
+              </p>
+            )}
+            <Link
+              href="/"
+              style={{
+                color: "var(--blue)",
+                fontSize: 13,
+                textDecoration: "underline",
+              }}
+            >
+              Start your first analysis →
+            </Link>
+          </div>
+        )}
+
+        {!loading && !authLoading && items.length > 0 && (
+          <>
+            <div className="pm-table">
+              <div className="pm-table-head">
+                <div>Invention</div>
+                <div>Date</div>
+                <div>Status</div>
+                <div>Clusters</div>
+                <div>Patents</div>
+                <div />
+              </div>
+              {filtered.map((item, i) => {
+                const stepLabel = item.current_step
+                  ? (STEP_LABELS[item.current_step] ?? item.current_step)
+                  : null;
+                const fav = (item.inventionIdea ?? item.id)
+                  .slice(0, 2)
+                  .toUpperCase();
+
+                return (
+                  <Link
+                    key={item.id}
+                    href={`/results/${item.id}`}
+                    className="pm-row"
+                    style={{ textDecoration: "none" }}
+                  >
+                    <div className="pm-row-title">
+                      <div
+                        className="pm-row-fav"
+                        style={{
+                          background: `linear-gradient(135deg, hsl(${i * 47}, 50%, 28%), hsl(${i * 47 + 30}, 50%, 18%))`,
+                          color: "white",
+                        }}
+                      >
+                        {fav}
+                      </div>
+                      <div className="pm-row-title-text">
+                        <h3>
+                          {item.inventionIdea
+                            ? item.inventionIdea.length > 80
+                              ? item.inventionIdea.slice(0, 80) + "…"
+                              : item.inventionIdea
+                            : `Job ${item.id.slice(0, 8)}…`}
+                        </h3>
+                        <div className="pm-row-title-meta">
+                          <span
+                            className="mono"
+                            style={{ fontSize: 10.5 }}
+                          >{`id: ${item.id.slice(0, 8)}`}</span>
+                          {stepLabel && item.status === "processing" && (
+                            <span style={{ color: "var(--blue)" }}>
+                              · {stepLabel}
+                            </span>
+                          )}
+                          {item.error_message && item.status === "failed" && (
+                            <span style={{ color: "var(--red)" }}>
+                              · {item.error_message}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pm-row-mono">
+                      {formatDate(item.created_at)}
+                    </div>
+                    <div>
+                      <StatusBadge status={item.status} />
+                    </div>
+                    <div className="pm-row-mono">—</div>
+                    <div className="pm-row-mono">—</div>
+                    <div className="pm-row-arrow">→</div>
+                  </Link>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "16px 4px",
+                color: "var(--text-3)",
+                fontSize: 12,
+              }}
+            >
+              <span>
+                Showing {filtered.length} of {items.length}
+              </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="pm-btn sm">←</button>
+                <button className="pm-btn sm">→</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

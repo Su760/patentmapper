@@ -10,6 +10,15 @@ const JOBS_KEY = "patentmapper_job_ids";
 const MAX_CHARS = 2000;
 const MIN_CHARS = 20;
 
+const JURISDICTIONS = [
+  { value: "all", label: "All" },
+  { value: "us", label: "US" },
+  { value: "ep", label: "Europe" },
+  { value: "wo", label: "International" },
+] as const;
+
+type JurisdictionValue = (typeof JURISDICTIONS)[number]["value"];
+
 function saveJobId(jobId: string): void {
   try {
     const existing = JSON.parse(
@@ -29,7 +38,7 @@ export default function Home() {
   const router = useRouter();
   const { session } = useAuth();
   const [inventionText, setInventionText] = useState("");
-  const [jurisdiction, setJurisdiction] = useState("all");
+  const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showLimitModal, setShowLimitModal] = useState(false);
@@ -71,168 +80,267 @@ export default function Home() {
     }
   }
 
+  const jurLabel =
+    JURISDICTIONS.find((j) => j.value === jurisdiction)?.label ?? "All";
+
   return (
-    <main className="min-h-[calc(100vh-65px)] flex flex-col items-center justify-center px-4 py-16">
-      <div className="w-full max-w-3xl">
-        {/* Hero */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl font-bold tracking-tight mb-4">
-            <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-              Patent
-            </span>
-            <span className="text-white">Mapper</span>
-          </h1>
-          <p className="text-gray-400 text-lg max-w-xl mx-auto leading-relaxed">
-            Describe your invention. We&apos;ll map the prior art landscape,
-            surface white space, and generate a competitive brief — in seconds.
-          </p>
-        </div>
-
-        {/* Form card */}
-        <form
-          onSubmit={handleSubmit}
-          className="bg-gray-900 border border-gray-700 rounded-2xl p-8 shadow-2xl"
-        >
-          {/* Jurisdiction selector */}
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-300 mb-3">
-              Jurisdiction
-            </label>
-            <div className="flex gap-2 flex-wrap">
-              {(
-                [
-                  { value: "all", label: "All" },
-                  { value: "us", label: "US" },
-                  { value: "ep", label: "Europe" },
-                  { value: "wo", label: "International" },
-                ] as const
-              ).map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setJurisdiction(value)}
-                  className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
-                    jurisdiction === value
-                      ? "bg-blue-600 text-white border-blue-500"
-                      : "bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label
-            htmlFor="invention"
-            className="block text-sm font-medium text-gray-300 mb-3"
-          >
-            Describe your invention
-          </label>
-
-          <div className="relative">
-            <textarea
-              id="invention"
-              value={inventionText}
-              onChange={(e) => setInventionText(e.target.value)}
-              maxLength={MAX_CHARS}
-              rows={7}
-              placeholder="Describe your invention idea in plain english..."
-              className="w-full bg-gray-800 border border-gray-600 rounded-xl px-4 py-3 text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm leading-relaxed"
-              disabled={isLoading}
-            />
+    <div className="pm" style={{ minHeight: "100%" }}>
+      <section className="pm-hero">
+        <div className="pm-hero-bg" />
+        <div className="pm-hero-grid" />
+        <div className="pm-hero-inner">
+          <div className="pm-hero-eyebrow">
+            <span className="pulse" />
             <span
-              className={`absolute bottom-3 right-3 text-xs ${
-                charCount > MAX_CHARS * 0.9
-                  ? "text-yellow-500"
-                  : "text-gray-500"
-              }`}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                letterSpacing: "0.04em",
+              }}
             >
-              {charCount}/{MAX_CHARS}
+              AI-powered · USPTO · Lens.org · Google Patents
             </span>
           </div>
 
-          {isTooShort && (
-            <p className="text-yellow-500 text-xs mt-2">
-              Please provide at least {MIN_CHARS} characters for a meaningful
-              analysis.
-            </p>
-          )}
+          <h1 className="pm-h1">
+            Map your patent landscape
+            <br />
+            <span className="accent">in 60 seconds.</span>
+          </h1>
 
-          {error && (
-            <div className="mt-3 bg-red-950 border border-red-800 rounded-lg px-4 py-3">
-              <p className="text-red-400 text-sm">{error}</p>
-            </div>
-          )}
+          <p className="pm-hero-sub">
+            Six AI agents fan out across USPTO, Lens, and Google Patents —
+            returning clusters, white-space gaps, and a relationship graph. Skip
+            the $500/mo enterprise tools.
+          </p>
 
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className="mt-5 w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <svg
-                  className="animate-spin h-4 w-4 text-white"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
+          <form onSubmit={handleSubmit} className="pm-form-shell">
+            <div className="pm-form-inner">
+              <div className="pm-form-row">
+                <div className="pm-form-label">
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 999,
+                      background: "var(--blue)",
+                      boxShadow: "0 0 6px var(--blue)",
+                    }}
+                  />
+                  Describe your invention
+                </div>
+                <div className="pm-jur-group">
+                  {JURISDICTIONS.map(({ value, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`pm-jur${jurisdiction === value ? " active" : ""}`}
+                      onClick={() => setJurisdiction(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <textarea
+                id="invention"
+                className="pm-textarea"
+                value={inventionText}
+                onChange={(e) => setInventionText(e.target.value)}
+                maxLength={MAX_CHARS}
+                rows={7}
+                placeholder="A microfluidic device that separates exosomes from whole blood using acoustic..."
+                disabled={isLoading}
+              />
+
+              {isTooShort && (
+                <p
+                  style={{
+                    color: "var(--yellow)",
+                    fontSize: 12,
+                    marginTop: 8,
+                  }}
                 >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-                Submitting...
-              </>
-            ) : (
-              "Analyze Patents →"
-            )}
-          </button>
-        </form>
+                  Please provide at least {MIN_CHARS} characters for a
+                  meaningful analysis.
+                </p>
+              )}
 
-        <p className="text-center text-gray-600 text-xs mt-5">
-          No account needed. Results are saved in your browser.
-        </p>
-        <div className="text-center mt-3">
-          <Link
-            href="/dashboard"
-            className="text-gray-500 hover:text-gray-400 text-xs transition-colors"
-          >
-            View past searches →
-          </Link>
+              {error && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    background: "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    borderRadius: 8,
+                    padding: "10px 14px",
+                  }}
+                >
+                  <p style={{ color: "var(--red)", fontSize: 13 }}>{error}</p>
+                </div>
+              )}
+
+              <div className="pm-form-foot">
+                <div className="pm-form-foot-left">
+                  <span
+                    className="mono"
+                    style={{
+                      color:
+                        charCount > MAX_CHARS * 0.9
+                          ? "var(--yellow)"
+                          : "var(--text-3)",
+                    }}
+                  >
+                    {charCount} / {MAX_CHARS}
+                  </span>
+                  <span style={{ color: "var(--border-strong)" }}>·</span>
+                  <span>
+                    Jurisdiction:{" "}
+                    <span style={{ color: "var(--text-2)" }}>{jurLabel}</span>
+                  </span>
+                  <span style={{ color: "var(--border-strong)" }}>·</span>
+                  <span>~58s avg</span>
+                </div>
+                <button
+                  type="submit"
+                  disabled={!canSubmit}
+                  className="pm-btn primary lg"
+                  style={
+                    !canSubmit ? { opacity: 0.5, cursor: "not-allowed" } : {}
+                  }
+                >
+                  {isLoading ? (
+                    <>
+                      <svg
+                        style={{
+                          animation: "spin 1s linear infinite",
+                          width: 16,
+                          height: 16,
+                        }}
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle
+                          style={{ opacity: 0.25 }}
+                          cx="12"
+                          cy="12"
+                          r="10"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          style={{ opacity: 0.75 }}
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                        />
+                      </svg>
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      Analyze patents
+                      <span style={{ fontFamily: "var(--font-mono)" }}>→</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <div className="pm-stats">
+            <div className="pm-stat">
+              <div className="pm-stat-num">
+                70<span className="unit">+</span>
+              </div>
+              <div className="pm-stat-label">patents analyzed per search</div>
+            </div>
+            <div className="pm-stat">
+              <div className="pm-stat-num">5</div>
+              <div className="pm-stat-label">AI-powered semantic clusters</div>
+            </div>
+            <div className="pm-stat">
+              <div className="pm-stat-num">3</div>
+              <div className="pm-stat-label">
+                white-space opportunities surfaced
+              </div>
+            </div>
+          </div>
+
+          <div className="pm-foot-note">
+            No account needed · Results saved in your browser ·{" "}
+            <Link
+              href="/dashboard"
+              style={{ color: "var(--text-3)", textDecoration: "none" }}
+            >
+              View past searches →
+            </Link>
+          </div>
         </div>
-      </div>
+      </section>
 
       {showLimitModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8 shadow-2xl w-full max-w-md">
-            <h2 className="text-xl font-bold text-white mb-3">
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.7)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+            padding: "0 16px",
+          }}
+        >
+          <div
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              borderRadius: 16,
+              padding: 32,
+              width: "100%",
+              maxWidth: 400,
+            }}
+          >
+            <h2
+              style={{
+                fontSize: 20,
+                fontWeight: 600,
+                margin: "0 0 12px",
+                letterSpacing: "-0.02em",
+              }}
+            >
               Monthly limit reached
             </h2>
-            <p className="text-gray-400 text-sm mb-6">
+            <p
+              style={{
+                color: "var(--text-2)",
+                fontSize: 14,
+                marginBottom: 24,
+                lineHeight: 1.55,
+              }}
+            >
               You&apos;ve used your 3 free analyses this month. Upgrade to Pro
               for unlimited searches.
             </p>
-            <div className="flex flex-col gap-3">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <Link
                 href="/pricing"
-                className="w-full text-center bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 px-6 rounded-xl transition-colors text-sm"
+                className="pm-btn primary lg"
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  textDecoration: "none",
+                }}
               >
                 Upgrade to Pro →
               </Link>
               <button
                 onClick={() => setShowLimitModal(false)}
-                className="w-full text-center bg-gray-800 hover:bg-gray-700 text-gray-400 font-medium py-3 px-6 rounded-xl transition-colors text-sm"
+                className="pm-btn lg"
+                style={{ width: "100%" }}
               >
                 Dismiss
               </button>
@@ -240,6 +348,13 @@ export default function Home() {
           </div>
         </div>
       )}
-    </main>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </div>
   );
 }
