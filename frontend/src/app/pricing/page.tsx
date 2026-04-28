@@ -22,20 +22,6 @@ const PRO_FEATURES = [
   "Early access to new features",
 ];
 
-function CheckIcon() {
-  return (
-    <svg
-      className="w-4 h-4 text-green-400 shrink-0 mt-0.5"
-      fill="none"
-      viewBox="0 0 24 24"
-      stroke="currentColor"
-      strokeWidth={2.5}
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
-
 export default function PricingPage() {
   const router = useRouter();
   const { session, loading: authLoading } = useAuth();
@@ -83,132 +69,282 @@ export default function PricingPage() {
   const isLoaded = !authLoading && plan !== null;
 
   return (
-    <main className="min-h-[calc(100vh-65px)] flex flex-col items-center justify-center px-4 py-16">
-      <div className="w-full max-w-4xl">
-        {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-white mb-3">Simple pricing</h1>
-          <p className="text-gray-400 text-lg max-w-xl mx-auto">
-            Start free. Upgrade when you need more.
+    <div className="pm" style={{ minHeight: "100vh" }}>
+      {/* Header */}
+      <div style={{ textAlign: "center", paddingTop: 80 }}>
+        <h1
+          style={{
+            fontSize: 36,
+            fontWeight: 600,
+            letterSpacing: "-0.03em",
+            color: "var(--text)",
+            margin: "0 0 12px",
+          }}
+        >
+          Simple pricing
+        </h1>
+        <p style={{ color: "var(--text-2)", fontSize: 16, margin: 0 }}>
+          Start free. Upgrade when you need more.
+        </p>
+      </div>
+
+      {/* Cards grid */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
+          maxWidth: 800,
+          margin: "48px auto 0",
+          padding: "0 32px",
+        }}
+      >
+        {/* Free card */}
+        <div className="pm-cluster" style={{ padding: 32 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 8,
+            }}
+          >
+            <span className="pm-cluster-section-label">Free</span>
+            {isLoaded && plan === "free" && (
+              <span className="pm-badge zinc">Current plan</span>
+            )}
+          </div>
+          <div style={{ marginBottom: 24 }}>
+            <span
+              style={{
+                fontSize: 36,
+                fontWeight: 500,
+                letterSpacing: "-0.03em",
+                color: "var(--text)",
+              }}
+            >
+              $0
+            </span>
+            <span
+              style={{ color: "var(--text-3)", fontSize: 14, marginLeft: 6 }}
+            >
+              / month
+            </span>
+          </div>
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "0 0 32px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            {FREE_FEATURES.map((f) => (
+              <li
+                key={f}
+                style={{ display: "flex", alignItems: "flex-start", gap: 8 }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "var(--green)",
+                    flexShrink: 0,
+                    marginTop: 5,
+                  }}
+                />
+                <span className="pm-player-name" style={{ fontSize: 13 }}>
+                  {f}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <a
+            href="/"
+            className="pm-btn"
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "center",
+              boxSizing: "border-box",
+            }}
+          >
+            Get started free →
+          </a>
+        </div>
+
+        {/* Pro card */}
+        <div
+          className="pm-cluster"
+          style={{
+            padding: 32,
+            border: "1px solid rgba(59,130,246,0.4)",
+            background:
+              "linear-gradient(160deg, var(--surface) 0%, var(--surface-2) 100%)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 8,
+            }}
+          >
+            <span className="pm-cluster-section-label">Pro</span>
+            {isLoaded && plan === "pro" ? (
+              <span className="pm-badge blue">Current plan</span>
+            ) : (
+              <span className="pm-badge blue">Most popular</span>
+            )}
+          </div>
+          <div style={{ marginBottom: 24 }}>
+            <span
+              style={{
+                fontSize: 36,
+                fontWeight: 500,
+                letterSpacing: "-0.03em",
+                color: "var(--blue)",
+              }}
+            >
+              $49
+            </span>
+            <span
+              style={{ color: "var(--text-3)", fontSize: 14, marginLeft: 6 }}
+            >
+              / month
+            </span>
+          </div>
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "0 0 32px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            {PRO_FEATURES.map((f) => (
+              <li
+                key={f}
+                style={{ display: "flex", alignItems: "flex-start", gap: 8 }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: "var(--green)",
+                    flexShrink: 0,
+                    marginTop: 5,
+                  }}
+                />
+                <span className="pm-player-name" style={{ fontSize: 13 }}>
+                  {f}
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {error && (
+            <div
+              style={{
+                marginBottom: 16,
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.3)",
+                borderRadius: 8,
+                padding: "12px 16px",
+              }}
+            >
+              <p style={{ color: "var(--red)", fontSize: 13, margin: 0 }}>
+                {error}
+              </p>
+            </div>
+          )}
+
+          {isLoaded && plan === "pro" ? (
+            <div
+              className="pm-btn"
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "center",
+                boxSizing: "border-box",
+                cursor: "default",
+                opacity: 0.6,
+              }}
+            >
+              You&apos;re on Pro
+            </div>
+          ) : (
+            <button
+              onClick={handleUpgrade}
+              disabled={upgrading || !isLoaded}
+              className="pm-btn primary"
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                boxSizing: "border-box",
+              }}
+            >
+              {upgrading ? (
+                <>
+                  <svg
+                    style={{
+                      animation: "spin 1s linear infinite",
+                      width: 16,
+                      height: 16,
+                    }}
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      style={{ opacity: 0.25 }}
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      style={{ opacity: 0.75 }}
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                    />
+                  </svg>
+                  Redirecting to checkout...
+                </>
+              ) : (
+                "Upgrade to Pro →"
+              )}
+            </button>
+          )}
+          <p
+            className="pm-cluster-section-label"
+            style={{ textAlign: "center", marginTop: 12 }}
+          >
+            14-day money-back guarantee
           </p>
         </div>
-
-        {/* Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-          {/* Free card */}
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-8">
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="text-xl font-bold text-white">Free</h2>
-              {isLoaded && plan === "free" && (
-                <span className="text-xs bg-gray-700 text-gray-300 px-2.5 py-1 rounded-full border border-gray-600">
-                  Current plan
-                </span>
-              )}
-            </div>
-            <div className="mb-6">
-              <span className="text-4xl font-bold text-white">$0</span>
-              <span className="text-gray-500 ml-1">/ month</span>
-            </div>
-            <ul className="space-y-3 mb-8">
-              {FREE_FEATURES.map((f) => (
-                <li
-                  key={f}
-                  className="flex items-start gap-2 text-gray-300 text-sm"
-                >
-                  <CheckIcon />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <a
-              href="/"
-              className="block w-full text-center bg-gray-800 hover:bg-gray-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors text-sm"
-            >
-              Get started free →
-            </a>
-          </div>
-
-          {/* Pro card */}
-          <div className="bg-gray-900 border-2 border-blue-500 rounded-2xl p-8 shadow-xl shadow-blue-950/40">
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="text-xl font-bold text-white">Pro</h2>
-              {isLoaded && plan === "pro" ? (
-                <span className="text-xs bg-blue-900 text-blue-300 px-2.5 py-1 rounded-full border border-blue-700">
-                  Current plan
-                </span>
-              ) : (
-                <span className="text-xs bg-blue-600 text-white px-2.5 py-1 rounded-full">
-                  Most popular
-                </span>
-              )}
-            </div>
-            <div className="mb-6">
-              <span className="text-4xl font-bold text-white">$49</span>
-              <span className="text-gray-500 ml-1">/ month</span>
-            </div>
-            <ul className="space-y-3 mb-8">
-              {PRO_FEATURES.map((f) => (
-                <li
-                  key={f}
-                  className="flex items-start gap-2 text-gray-300 text-sm"
-                >
-                  <CheckIcon />
-                  {f}
-                </li>
-              ))}
-            </ul>
-
-            {error && (
-              <div className="mb-4 bg-red-950 border border-red-800 rounded-lg px-4 py-3">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-
-            {isLoaded && plan === "pro" ? (
-              <div className="w-full text-center bg-gray-800 text-gray-400 font-semibold py-3 px-6 rounded-xl text-sm cursor-default">
-                You&apos;re on Pro
-              </div>
-            ) : (
-              <button
-                onClick={handleUpgrade}
-                disabled={upgrading || !isLoaded}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm"
-              >
-                {upgrading ? (
-                  <>
-                    <svg
-                      className="animate-spin h-4 w-4 text-white"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      />
-                    </svg>
-                    Redirecting to checkout...
-                  </>
-                ) : (
-                  "Upgrade to Pro →"
-                )}
-              </button>
-            )}
-            <p className="text-center text-gray-600 text-xs mt-3">
-              14-day money-back guarantee
-            </p>
-          </div>
-        </div>
       </div>
-    </main>
+
+      {/* Footer link */}
+      <div style={{ textAlign: "center", marginTop: 40, paddingBottom: 80 }}>
+        <span style={{ color: "var(--text-3)", fontSize: 13 }}>
+          Questions?{" "}
+        </span>
+        <a href="/auth" className="pm-nav-link" style={{ fontSize: 13 }}>
+          Contact us
+        </a>
+      </div>
+    </div>
   );
 }
