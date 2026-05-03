@@ -91,3 +91,34 @@ export async function ideateWhiteSpace(
   if (!res.ok) throw new Error(`Ideate failed: ${res.status}`);
   return res.json() as Promise<WhiteSpaceIdea>;
 }
+
+export interface ClaimResult {
+  patent_id: string;
+  title: string;
+  likely_claims: string[];
+  overlap_level: "high" | "medium" | "low" | "none";
+  overlap_explanation: string;
+  differentiators: string;
+}
+
+export async function analyzeClaimsRequest(
+  searchId: string,
+): Promise<{ claims: ClaimResult[] }> {
+  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? `Analyze claims failed: ${res.status}`);
+  }
+  return res.json() as Promise<{ claims: ClaimResult[] }>;
+}
+
+export async function getClaimsAnalysis(
+  searchId: string,
+): Promise<{ claims: ClaimResult[] | null }> {
+  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`);
+  if (!res.ok) throw new Error(`Get claims failed: ${res.status}`);
+  return res.json() as Promise<{ claims: ClaimResult[] | null }>;
+}

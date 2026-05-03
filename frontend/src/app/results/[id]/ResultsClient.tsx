@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { getJobStatus, ideateWhiteSpace, WhiteSpaceIdea } from "@/lib/api";
+import {
+  getJobStatus,
+  ideateWhiteSpace,
+  WhiteSpaceIdea,
+  analyzeClaimsRequest,
+  ClaimResult,
+} from "@/lib/api";
 import { createClient } from "@/lib/supabase";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
@@ -835,6 +841,111 @@ function NodeSidePanel({
   );
 }
 
+// ─── Claim Analysis Components ───────────────────────────────────────────────
+
+function overlapBadgeStyle(level: ClaimResult["overlap_level"]): {
+  background: string;
+  color: string;
+  border: string;
+} {
+  switch (level) {
+    case "high":
+      return {
+        background: "rgba(239,68,68,0.12)",
+        color: "#ef4444",
+        border: "1px solid rgba(239,68,68,0.3)",
+      };
+    case "medium":
+      return {
+        background: "rgba(234,179,8,0.12)",
+        color: "#ca8a04",
+        border: "1px solid rgba(234,179,8,0.3)",
+      };
+    case "low":
+    case "none":
+      return {
+        background: "rgba(34,197,94,0.12)",
+        color: "#16a34a",
+        border: "1px solid rgba(34,197,94,0.3)",
+      };
+  }
+}
+
+function ClaimCard({ claim }: { claim: ClaimResult }) {
+  const badge = overlapBadgeStyle(claim.overlap_level);
+  return (
+    <div className="pm-cluster">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 8,
+          marginBottom: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--text-3)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: 4,
+            padding: "2px 6px",
+          }}
+        >
+          {claim.patent_id}
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            borderRadius: 4,
+            padding: "2px 8px",
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            ...badge,
+          }}
+        >
+          {claim.overlap_level} overlap
+        </span>
+      </div>
+      <p className="pm-cluster-name" style={{ marginBottom: 12 }}>
+        {claim.title}
+      </p>
+      <p className="pm-cluster-section-label" style={{ marginBottom: 6 }}>
+        Likely Claims
+      </p>
+      <ul
+        style={{
+          margin: "0 0 12px 0",
+          paddingLeft: 16,
+          fontSize: 12,
+          color: "var(--text-2)",
+          lineHeight: 1.6,
+        }}
+      >
+        {claim.likely_claims.map((c, i) => (
+          <li key={i}>{c}</li>
+        ))}
+      </ul>
+      <p className="pm-cluster-section-label" style={{ marginBottom: 4 }}>
+        Overlap
+      </p>
+      <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 12 }}>
+        {claim.overlap_explanation}
+      </p>
+      <p className="pm-cluster-section-label" style={{ marginBottom: 4 }}>
+        Your Differentiators
+      </p>
+      <p style={{ fontSize: 13, color: "var(--green)" }}>
+        {claim.differentiators}
+      </p>
+    </div>
+  );
+}
+
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export default function ResultsClient({ jobId }: { jobId: string }) {
@@ -849,8 +960,12 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [ideatingId, setIdeatingId] = useState<string | null>(null);
   const [ideas, setIdeas] = useState<Record<string, WhiteSpaceIdea>>({});
+  const [analyzingClaims, setAnalyzingClaims] = useState(false);
+  const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(null);
+  const [claimsError, setClaimsError] = useState<string | null>(null);
 
   const stepperStartedAt = useRef<number>(0);
+  const claimsSectionRef = useRef<HTMLElement | null>(null);
 
   // Fetch invention_idea early so loading_results screen has context
   const fetchInventionIdea = useCallback(async () => {
@@ -898,6 +1013,23 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       console.error("Ideate failed", e);
     } finally {
       setIdeatingId(null);
+    }
+  }
+
+  async function handleAnalyzeClaims() {
+    setAnalyzingClaims(true);
+    setClaimsError(null);
+    try {
+      const { claims } = await analyzeClaimsRequest(jobId);
+      setClaimsAnalysis(claims);
+      setTimeout(
+        () => claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" }),
+        100,
+      );
+    } catch (e) {
+      setClaimsError(e instanceof Error ? e.message : "Analysis failed");
+    } finally {
+      setAnalyzingClaims(false);
     }
   }
 
@@ -1204,8 +1336,47 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           <button className="pm-btn sm print:hidden" onClick={handleCopyLink}>
             {copied ? "Copied!" : "Share"}
           </button>
+          <button
+            className="pm-btn sm print:hidden"
+            onClick={handleAnalyzeClaims}
+            disabled={analyzingClaims}
+          >
+            {analyzingClaims ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <svg
+                  className="animate-spin"
+                  width={12}
+                  height={12}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                Analyzing...
+              </span>
+            ) : (
+              "⚖ Claims"
+            )}
+          </button>
         </div>
       </div>
+      {claimsError && (
+        <div
+          style={{
+            background: "rgba(239,68,68,0.08)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            borderRadius: 8,
+            padding: "8px 16px",
+            margin: "8px 32px 0",
+            color: "var(--red, #ef4444)",
+            fontSize: 13,
+          }}
+        >
+          Claim analysis failed: {claimsError}
+        </div>
+      )}
 
       {/* Section 01: White Space Opportunities */}
       {gaps.length > 0 && (
@@ -1391,6 +1562,39 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           Generated by PatentMapper — patentmapper.com — Not legal advice
         </div>
       </section>
+
+      {/* Section 06: Claim Analysis */}
+      {claimsAnalysis && (
+        <section className="pm-section" ref={claimsSectionRef}>
+          <div className="pm-section-head">
+            <div className="pm-section-title">
+              <span className="num">06</span>
+              <h2>Claim analysis</h2>
+            </div>
+            <div className="pm-section-aside">
+              <span>Prior art overlap with your invention — not legal advice</span>
+            </div>
+          </div>
+          <div className="pm-cluster-grid">
+            {claimsAnalysis.map((claim) => (
+              <ClaimCard key={claim.patent_id} claim={claim} />
+            ))}
+          </div>
+          <p
+            style={{
+              textAlign: "center",
+              color: "var(--text-3)",
+              fontSize: 12,
+              marginTop: 24,
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            This analysis is AI-generated from patent abstracts only and does
+            not constitute legal advice. Consult a patent attorney for formal
+            freedom-to-operate analysis.
+          </p>
+        </section>
+      )}
 
       {/* Footer nav */}
       <div

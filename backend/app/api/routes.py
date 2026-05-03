@@ -232,6 +232,83 @@ async def ideate_white_space(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/jobs/{search_id}/analyze-claims")
+async def get_claims_analysis(
+    search_id: str,
+    supabase: AsyncClient = Depends(get_supabase),
+) -> Dict[str, Any]:
+    """Return cached claims analysis if previously generated."""
+    result = await supabase.table("search_results").select("claims_analysis").eq("search_id", search_id).execute()
+    row = result.data[0] if result.data else None
+    return {"claims": row.get("claims_analysis") if row else None}
+
+
+@router.post("/jobs/{search_id}/analyze-claims")
+async def analyze_claims(
+    search_id: str,
+    supabase: AsyncClient = Depends(get_supabase),
+) -> Dict[str, Any]:
+    """Analyze prior art claim overlap for a search's patents using Groq."""
+    search_res = await supabase.table("searches").select("invention_idea").eq("id", search_id).single().execute()
+    if not search_res.data:
+        raise HTTPException(status_code=404, detail=f"Search {search_id} not found")
+    invention_idea = search_res.data["invention_idea"]
+
+    patents_res = await supabase.table("patents").select("patent_id, title, abstract").eq("search_id", search_id).limit(8).execute()
+    patents = patents_res.data or []
+    if not patents:
+        raise HTTPException(status_code=404, detail="No patents found for this search")
+
+    n = len(patents)
+    patents_text = "\n".join(
+        f"{p['patent_id']} | {p['title']} | {(p.get('abstract') or '')[:300]}"
+        for p in patents
+    )
+
+    prompt = (
+        f"Invention: {invention_idea}\n\n"
+        f"Analyze these {n} patents for claim overlap with the invention. "
+        "For each patent, identify what specific technical aspects it likely claims "
+        "and whether those claims overlap with the invention.\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "claims": [\n'
+        "    {\n"
+        '      "patent_id": "US123...",\n'
+        '      "title": "...",\n'
+        '      "likely_claims": ["Claim: a method for...", "Claim: a device comprising..."],\n'
+        '      "overlap_level": "high|medium|low|none",\n'
+        '      "overlap_explanation": "This patent likely claims X which directly covers Y in your invention...",\n'
+        '      "differentiators": "Your invention differs by..."\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        f"Patents:\n{patents_text}\n\n"
+        "Return ONLY valid JSON, no markdown."
+    )
+
+    try:
+        client = AsyncGroq(api_key=settings.groq_api_key)
+        response = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a senior patent attorney analyzing prior art."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500,
+        )
+        result = json.loads(response.choices[0].message.content)
+        claims = result.get("claims", [])
+
+        await supabase.table("search_results").update({"claims_analysis": claims}).eq("search_id", search_id).execute()
+
+        return {"claims": claims}
+    except Exception as e:
+        logger.error("[analyze_claims] Groq error for search %s: %s", search_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job(
     job_id: str,

@@ -14,7 +14,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.core.config import settings
-from app.services.patent_api import fetch_lens_patents, fetch_patentsview_patents, fetch_serpapi_patents
+from app.services.patent_api import fetch_lens_patents, fetch_serpapi_patents
 
 logger = logging.getLogger(__name__)
 
@@ -139,31 +139,20 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
         client: httpx.AsyncClient, query: str
     ) -> List[Dict[str, Any]]:
         async with _SEMAPHORE:
-            # Priority 1: PatentsView (US patents, no quota cost)
-            if settings.patentsview_enabled and jurisdiction in ("us", "all"):
-                logger.info("[fetcher] trying PatentsView for query: %s", query)
-                try:
-                    results: List[Dict[str, Any]] = await fetch_patentsview_patents(
-                        query, client, settings.patentsview_key, jurisdiction
-                    )
-                    logger.info("[fetcher] PatentsView returned %d results", len(results))
-                    if results:
-                        return results
-                    logger.info("[fetcher] PatentsView empty/failed, trying Lens.org")
-                except Exception as e:
-                    logger.warning(
-                        "[fetcher] PatentsView empty/failed, trying Lens.org: %s", e
-                    )
-            # Priority 2: Lens.org
+            # Priority 1: Lens.org
+            logger.info("[fetcher] querying Lens.org for: %s", query)
             try:
-                return await fetch_lens_patents(query, client, api_key=settings.lens_api_key)
-            except Exception as e:
-                logger.warning(
-                    "[fetcher] Lens.org failed for query '%s': %s — falling back to SerpAPI", query, e
+                results: List[Dict[str, Any]] = await fetch_lens_patents(
+                    query, client, api_key=settings.lens_api_key
                 )
-            # Priority 3: SerpAPI (last resort)
+                logger.info("[fetcher] Lens.org returned %d results", len(results))
+                if results:
+                    return results
+            except Exception as e:
+                logger.warning("[fetcher] Lens.org failed, falling back to SerpAPI: %s", e)
+            # Priority 2: SerpAPI fallback
             if settings.serpapi_enabled:
-                logger.info("[fetcher] falling back to SerpAPI for query: %s", query)
+                logger.info("[fetcher] Lens.org failed, falling back to SerpAPI for: %s", query)
                 try:
                     return await fetch_serpapi_patents(
                         query, client, settings.serpapi_key, jurisdiction

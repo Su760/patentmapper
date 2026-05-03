@@ -9,8 +9,6 @@ class Settings(BaseSettings):
     )
 
     groq_api_key: str = ""
-    patentsview_key: str = ""
-    patentsview_enabled: bool = True
     serpapi_key: str = ""
     lens_api_key: str = ""
     supabase_url: str = ""
