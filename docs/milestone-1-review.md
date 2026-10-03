@@ -103,6 +103,12 @@ The setup starts a separate local CLI stack, enables anonymous Auth only there, 
 
 CI runs two jobs: PostgreSQL + mocked regressions + frontend/browser checks, and a separate disposable Auth/PostgREST job. The first deliberately skips the Auth class because the second runs it against a real stack. Inspect the branch's **Checks** workflow; no deployment job is included.
 
+## Hosted verification and remaining external status
+
+[Checks run 37098127161](https://github.com/Su760/patentmapper/actions/runs/37098127161) passed on application commit `99f5163af820108d48ff6e19aef54b596673a7d0`: `milestone1` ran 29 backend/SQL tests (one class-level Auth skip assigned to the second job), lint, typecheck, production build and three Chromium tests; `auth-postgrest` ran five real Auth/PostgREST tests successfully. Both jobs finished successfully. The final handoff-only commit changes documentation, not tested application code.
+
+The repository’s existing Vercel Git integration automatically attempted a preview on branch push and posted **failure**. [Its status](https://vercel.com/su2976/patentmapper/7t51cfURG8k6p4HyxLmjgvamRMhf) is separate from the passing Checks workflow. Base commit `92b9580` also has a failed Vercel status. Read-only CLI inspection failed with `Error: The specified scope does not exist` for scope `su2976`; the cause of the preview failure is **UNVERIFIED**, not assumed to be an application defect. No deployment command, deployment-setting change, merge, or production migration was performed. Access to that Vercel scope is required to inspect its build logs.
+
 ## Separate Stop-hook issue
 
 The previous inspection looked at Claude configuration, not the active Codex hook file. `~/.codex/hooks.json:41` contains a Stop command `echo '<session-completion reminder>'`; the next hook invokes `node ~/.codex/hooks/on-stop.js`. A safe standalone execution of **only** the echo returned exit 0, zero stderr, stdout beginning `Session complete.`; parsing those actual bytes as JSON produced `Expecting value: line 1 column 1 (char 0)`. This command emits plain text where the reported runner expects JSON.
@@ -141,7 +147,7 @@ Deferred: durable job recovery/idempotency and report persistence/reliability; e
  backend/tests/test_private_analyses.py             | 315 ++++++++++++++
  backend/tests/test_supabase_http.py                | 172 ++++++++
  backend/tests/test_usage_status.py                 |  54 +++
- docs/milestone-1-review.md                         | 168 ++++++++
+ docs/milestone-1-review.md                         | 174 ++++++++
  frontend/.eslintrc.json                            |   3 +
  frontend/.gitignore                                |   6 +
  frontend/package-lock.json                         | 455 +++------------------
@@ -163,6 +169,6 @@ Deferred: durable job recovery/idempotency and report persistence/reliability; e
  supabase/tests/local_http_setup.py                 |  34 ++
  tasks/lessons.md                                   |   2 +
  tasks/todo.md                                      | 125 +++++-
- 44 files changed, 2764 insertions(+), 947 deletions(-)
+ 44 files changed, 2770 insertions(+), 947 deletions(-)
 ```
 <!-- diffstat-end -->
