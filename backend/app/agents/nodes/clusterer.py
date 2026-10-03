@@ -2,7 +2,7 @@
 Clusterer Node
 In:  deduped_patents
 Out: clusters (3-5 thematic clusters)
-Real impl: pass top 50 abstracts to Groq llama-3.3-70b-versatile, ask for thematic grouping
+Real impl: pass top 50 abstracts to the configured Groq model for thematic grouping
 """
 import json
 import logging
@@ -15,6 +15,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.core.config import settings
+from app.services.llm import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +115,8 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> List[Dict[str, Any]]:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": abstracts_text},

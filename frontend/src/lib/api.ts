@@ -1,4 +1,36 @@
+import { createClient } from "@/lib/supabase";
+import { DEMO_JOB_ID, DEMO_IDEA, DEMO_CLAIMS } from "@/lib/demo";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+
+async function authHeaders(jwt?: string): Promise<Record<string, string>> {
+  const { data, error } = await createClient().auth.getSession();
+  const token = jwt ?? data.session?.access_token;
+  if (error || !token)
+    throw new Error(
+      "Sign in to access private analyses, or view the synthetic demo.",
+    );
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function requireOK(res: Response): Promise<void> {
+  if (res.ok) return;
+  if (res.status === 401)
+    throw new Error("Your session is missing or expired. Sign in again.");
+  if (res.status === 404)
+    throw new Error("This analysis is unavailable to your account.");
+  const data = (await res.json().catch(() => ({}))) as {
+    detail?: string | { message?: string };
+  };
+  const message =
+    typeof data.detail === "string" ? data.detail : data.detail?.message;
+  throw Object.assign(new Error(message ?? `Request failed (${res.status}).`), {
+    code: res.status === 402 ? "limit_reached" : undefined,
+  });
+}
 
 export interface JobCreatedResponse {
   job_id: string;
@@ -17,24 +49,14 @@ export async function createJob(
   jurisdiction: string,
   jwt?: string,
 ): Promise<JobCreatedResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
+  const headers = await authHeaders(jwt);
   const res = await fetch(`${API_BASE}/jobs`, {
     method: "POST",
     headers,
     body: JSON.stringify({ invention_idea: inventionIdea, jurisdiction }),
   });
 
-  if (res.status === 402) {
-    const data = (await res.json()) as { detail: { message: string } };
-    const message = data.detail?.message ?? "Monthly limit reached.";
-    throw Object.assign(new Error(message), { code: "limit_reached" });
-  }
-  if (!res.ok) {
-    throw new Error(`Failed to create job: ${res.status} ${res.statusText}`);
-  }
+  await requireOK(res);
 
   return res.json() as Promise<JobCreatedResponse>;
 }
@@ -56,13 +78,18 @@ export async function createCheckoutSession(
 }
 
 export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}`);
-
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch job status: ${res.status} ${res.statusText}`,
-    );
-  }
+  if (jobId === DEMO_JOB_ID)
+    return {
+      job_id: DEMO_JOB_ID,
+      status: "completed",
+      current_step: "done",
+      error_message: null,
+    };
+  const res = await fetch(`${API_BASE}/jobs/${jobId}`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  await requireOK(res);
 
   return res.json() as Promise<JobStatusResponse>;
 }
@@ -80,15 +107,16 @@ export async function ideateWhiteSpace(
   title: string,
   description: string,
 ): Promise<WhiteSpaceIdea> {
+  if (searchId === DEMO_JOB_ID) return structuredClone(DEMO_IDEA);
   const res = await fetch(`${API_BASE}/jobs/${searchId}/ideate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify({
       white_space_title: title,
       white_space_description: description,
     }),
   });
-  if (!res.ok) throw new Error(`Ideate failed: ${res.status}`);
+  await requireOK(res);
   return res.json() as Promise<WhiteSpaceIdea>;
 }
 
@@ -104,21 +132,42 @@ export interface ClaimResult {
 export async function analyzeClaimsRequest(
   searchId: string,
 ): Promise<{ claims: ClaimResult[] }> {
+  if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(),
   });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `Analyze claims failed: ${res.status}`);
-  }
+  await requireOK(res);
   return res.json() as Promise<{ claims: ClaimResult[] }>;
 }
 
 export async function getClaimsAnalysis(
   searchId: string,
 ): Promise<{ claims: ClaimResult[] | null }> {
-  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`);
-  if (!res.ok) throw new Error(`Get claims failed: ${res.status}`);
+  if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
+  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  await requireOK(res);
   return res.json() as Promise<{ claims: ClaimResult[] | null }>;
+}
+
+export interface UsageStatus {
+  plan: "free" | "pro";
+  window_seconds: number;
+  as_of: string;
+  usage: Record<
+    "job" | "claims" | "ideation",
+    { used: number; limit: number; remaining: number }
+  >;
+}
+
+export async function getUsageStatus(): Promise<UsageStatus> {
+  const res = await fetch(`${API_BASE}/stripe/subscription-status`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  await requireOK(res);
+  return res.json() as Promise<UsageStatus>;
 }

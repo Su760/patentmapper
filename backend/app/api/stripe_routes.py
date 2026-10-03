@@ -5,7 +5,6 @@ GET  /api/stripe/subscription-status    — check current plan for the authed us
 """
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import stripe
@@ -13,7 +12,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from supabase import AsyncClient, create_async_client
 
 from app.core.config import settings
+from app.core.security import validate_user
 from app.db import get_supabase
+from app.services.usage import usage_status
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,18 +25,7 @@ router = APIRouter()
 
 async def _get_user(authorization: Optional[str], supabase: AsyncClient) -> Any:
     """Validate Bearer JWT and return the Supabase user object."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    jwt = authorization.removeprefix("Bearer ")
-    try:
-        resp = await supabase.auth.get_user(jwt)
-        if not resp.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return resp.user
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    return await validate_user(authorization, supabase)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -72,39 +62,7 @@ async def subscription_status(
     """Return the current plan for the authenticated user."""
     user = await _get_user(authorization, supabase)
 
-    try:
-        result = (
-            await supabase.table("subscriptions")
-            .select("plan, status")
-            .eq("user_id", str(user.id))
-            .limit(1)
-            .execute()
-        )
-        sub_data = result.data[0] if result.data else None
-    except Exception:
-        sub_data = None
-
-    if (
-        sub_data is not None
-        and sub_data.get("plan") == "pro"
-        and sub_data.get("status") == "active"
-    ):
-        return {"plan": "pro"}
-
-    # Count searches in the past 30 days
-    try:
-        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        count_result = (
-            await supabase.table("searches")
-            .select("id", count="exact")
-            .eq("user_id", str(user.id))
-            .gte("created_at", since)
-            .execute()
-        )
-        searches_used = count_result.count or 0
-    except Exception:
-        searches_used = 0
-    return {"plan": "free", "searches_used": searches_used}
+    return await usage_status(supabase, str(user.id))
 
 
 @router.post("/webhook")

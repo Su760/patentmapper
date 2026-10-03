@@ -9,6 +9,8 @@ import {
   ClaimResult,
 } from "@/lib/api";
 import { createClient } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import { DEMO_JOB_ID, DEMO_META, DEMO_RESULTS } from "@/lib/demo";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
 
@@ -295,12 +297,14 @@ function WhiteSpaceCard({
   index,
   idea,
   isIdeating,
+  ideationError,
   onIdeate,
 }: {
   gap: WhiteSpaceGap;
   index: number;
   idea?: WhiteSpaceIdea;
   isIdeating: boolean;
+  ideationError?: string;
   onIdeate: () => void;
 }) {
   const tier = viabilityToTier(gap.viability);
@@ -320,6 +324,9 @@ function WhiteSpaceCard({
         <span className={`pm-badge ${badgeClass}`}>{gap.viability}</span>
       </div>
       <p className="pm-ws-desc">{gap.description}</p>
+      {ideationError && (
+        <p role="alert">Idea generation failed: {ideationError}</p>
+      )}
       <div className="pm-ws-foot">
         <div className="pm-ws-score">
           <span style={{ color: "var(--text-3)" }}>viability</span>
@@ -949,6 +956,12 @@ function ClaimCard({ claim }: { claim: ClaimResult }) {
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export default function ResultsClient({ jobId }: { jobId: string }) {
+  const { user, loading: authLoading } = useAuth();
+  const userId = user?.id;
+  const isDemo = jobId === DEMO_JOB_ID;
+  const accessScope = useRef("");
+  accessScope.current = `${jobId}:${userId ?? "signed-out"}`;
+  const [renderScope, setRenderScope] = useState("");
   const [phase, setPhase] = useState<Phase>("init");
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [simulatedStepIdx, setSimulatedStepIdx] = useState(0);
@@ -958,7 +971,11 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [ideatingId, setIdeatingId] = useState<string | null>(null);
+  const [ideating, setIdeating] = useState<Record<string, boolean>>({});
+  const pendingIdeations = useRef(new Set<string>());
+  const [ideationErrors, setIdeationErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [ideas, setIdeas] = useState<Record<string, WhiteSpaceIdea>>({});
   const [analyzingClaims, setAnalyzingClaims] = useState(false);
   const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(null);
@@ -969,16 +986,29 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
 
   // Fetch invention_idea early so loading_results screen has context
   const fetchInventionIdea = useCallback(async () => {
+    const scope = accessScope.current;
+    if (jobId === DEMO_JOB_ID) {
+      setInventionIdea(DEMO_META.invention_idea);
+      return;
+    }
     const client = createClient();
     const { data } = await client
       .from("searches")
       .select("invention_idea")
       .eq("id", jobId)
       .single();
-    if (data?.invention_idea) setInventionIdea(data.invention_idea);
+    if (scope === accessScope.current && data?.invention_idea)
+      setInventionIdea(data.invention_idea);
   }, [jobId]);
 
   const loadResults = useCallback(async () => {
+    const scope = accessScope.current;
+    if (jobId === DEMO_JOB_ID) {
+      setSearchMeta(DEMO_META);
+      setSearchResult(DEMO_RESULTS);
+      setPhase("completed");
+      return;
+    }
     const client = createClient();
     const [searchRes, resultsRes] = await Promise.all([
       client
@@ -993,6 +1023,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         .single(),
     ]);
 
+    if (scope !== accessScope.current) return;
+
     if (searchRes.error || resultsRes.error) {
       setErrorMessage("Could not load results from database.");
       setPhase("failed");
@@ -1005,31 +1037,49 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }, [jobId]);
 
   async function handleIdeate(gap: WhiteSpaceGap) {
-    setIdeatingId(gap.title);
+    const scope = accessScope.current;
+    const key = `${scope}:${gap.title}`;
+    if (pendingIdeations.current.has(key)) return;
+    pendingIdeations.current.add(key);
+    setIdeating((prev) => ({ ...prev, [gap.title]: true }));
+    setIdeationErrors((prev) => ({ ...prev, [gap.title]: "" }));
     try {
       const idea = await ideateWhiteSpace(jobId, gap.title, gap.description);
+      if (scope !== accessScope.current) return;
       setIdeas((prev) => ({ ...prev, [gap.title]: idea }));
     } catch (e) {
-      console.error("Ideate failed", e);
+      if (scope === accessScope.current)
+        setIdeationErrors((prev) => ({
+          ...prev,
+          [gap.title]:
+            e instanceof Error
+              ? e.message
+              : "Try again. If this continues, reload or sign in again.",
+        }));
     } finally {
-      setIdeatingId(null);
+      pendingIdeations.current.delete(key);
+      if (scope === accessScope.current)
+        setIdeating((prev) => ({ ...prev, [gap.title]: false }));
     }
   }
 
   async function handleAnalyzeClaims() {
+    const scope = accessScope.current;
     setAnalyzingClaims(true);
     setClaimsError(null);
     try {
       const { claims } = await analyzeClaimsRequest(jobId);
+      if (scope !== accessScope.current) return;
       setClaimsAnalysis(claims);
       setTimeout(
         () => claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" }),
         100,
       );
     } catch (e) {
-      setClaimsError(e instanceof Error ? e.message : "Analysis failed");
+      if (scope === accessScope.current)
+        setClaimsError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
-      setAnalyzingClaims(false);
+      if (scope === accessScope.current) setAnalyzingClaims(false);
     }
   }
 
@@ -1049,8 +1099,30 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
 
   // ── Effect 1: Initial status check on mount ──
   useEffect(() => {
+    if (authLoading && !isDemo) return;
+    setRenderScope(accessScope.current);
+    setSearchMeta(null);
+    setSearchResult(null);
+    setClaimsAnalysis(null);
+    setIdeas({});
+    setInventionIdea(null);
+    setSelectedNode(null);
+    setIdeating({});
+    setIdeationErrors({});
+    setAnalyzingClaims(false);
+    setClaimsError(null);
+    if (!isDemo && !userId) {
+      setErrorMessage(
+        "Sign in to access this private analysis. A job link alone does not grant access.",
+      );
+      setPhase("failed");
+      return;
+    }
+    let cancelled = false;
+    setPhase("init");
     getJobStatus(jobId)
       .then((status) => {
+        if (cancelled) return;
         if (status.status === "completed") {
           // Already done — skip stepper, go straight to loading_results
           setPhase("loading_results");
@@ -1066,8 +1138,19 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           setPhase("polling");
         }
       })
-      .catch(console.warn);
-  }, [jobId, fetchInventionIdea, loadResults]);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Could not access this analysis.",
+        );
+        setPhase("failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, fetchInventionIdea, loadResults, authLoading, isDemo, userId]);
 
   // ── Effect 2: Simulated step animation while polling ──
   useEffect(() => {
@@ -1084,9 +1167,11 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   useEffect(() => {
     if (phase !== "polling") return;
 
+    const scope = accessScope.current;
     const intervalId = setInterval(async () => {
       try {
         const status = await getJobStatus(jobId);
+        if (scope !== accessScope.current) return;
 
         if (status.status === "completed") {
           clearInterval(intervalId);
@@ -1094,6 +1179,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           const elapsed = Date.now() - stepperStartedAt.current;
           const delay = Math.max(0, STEPPER_MIN_MS - elapsed);
           setTimeout(() => {
+            if (scope !== accessScope.current) return;
             setPhase("loading_results");
             fetchInventionIdea();
             loadResults();
@@ -1106,14 +1192,22 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           setCurrentStep(status.current_step);
         }
       } catch (err) {
-        console.warn("Poll error:", err);
+        if (scope !== accessScope.current) return;
+        clearInterval(intervalId);
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : "Could not access this analysis.",
+        );
+        setPhase("failed");
       }
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(intervalId);
-  }, [phase, jobId, fetchInventionIdea, loadResults]);
+  }, [phase, jobId, fetchInventionIdea, loadResults, userId]);
 
   // ── Init UI (brief spinner while first poll resolves) ──
+  if (renderScope !== accessScope.current) return null;
   if (phase === "init") {
     return (
       <main
@@ -1293,6 +1387,12 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
 
   return (
     <div className="pm" style={{ minHeight: "100%" }}>
+      {isDemo && (
+        <p role="status" style={{ padding: 16, color: "var(--text-2)" }}>
+          Synthetic demo — fixed sample data. No patent search or AI generation
+          was performed. <a href="/auth">Sign in</a> for a private analysis.
+        </p>
+      )}
       {/* Sticky header bar */}
       <div className="pm-sticky-bar">
         <div className="pm-sticky-left">
@@ -1397,7 +1497,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
                 gap={gap}
                 index={idx}
                 idea={ideas[gap.title]}
-                isIdeating={ideatingId === gap.title}
+                isIdeating={!!ideating[gap.title]}
+                ideationError={ideationErrors[gap.title]}
                 onIdeate={() => handleIdeate(gap)}
               />
             ))}

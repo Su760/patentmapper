@@ -143,7 +143,6 @@ async def fetch_lens_patents(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    logger.debug("[patent_api] fetch_lens_patents headers: %s", headers)
     payload = {
         "query": {
             "bool": {

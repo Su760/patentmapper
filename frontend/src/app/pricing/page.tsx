@@ -1,21 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { createCheckoutSession } from "@/lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+import { useUsage } from "@/lib/use-usage";
+import UsageSummary from "@/components/UsageSummary";
 
 const FREE_FEATURES = [
-  "3 patent landscape analyses per month",
+  "Bounded allowance over a rolling window",
   "Prior art clusters + white space analysis",
   "PDF export & print",
   "Results saved for 30 days",
 ];
 
 const PRO_FEATURES = [
-  "Unlimited analyses",
+  "Expanded, bounded analysis allowance",
   "Everything in Free",
   "Priority processing",
   "Search history forever",
@@ -25,24 +26,10 @@ const PRO_FEATURES = [
 export default function PricingPage() {
   const router = useRouter();
   const { session, loading: authLoading } = useAuth();
-  const [plan, setPlan] = useState<"free" | "pro" | null>(null);
+  const usage = useUsage();
+  const plan = usage.data?.plan ?? (!session ? "free" : null);
   const [upgrading, setUpgrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!session) {
-      setPlan("free");
-      return;
-    }
-    fetch(`${API_BASE}/stripe/subscription-status`, {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    })
-      .then((r) => r.json())
-      .then((data: { plan: string }) =>
-        setPlan(data.plan === "pro" ? "pro" : "free"),
-      )
-      .catch(() => setPlan("free"));
-  }, [session]);
 
   async function handleUpgrade() {
     if (!session) {
@@ -70,6 +57,9 @@ export default function PricingPage() {
 
   return (
     <div className="pm" style={{ minHeight: "100vh" }}>
+      <div style={{ padding: "24px 32px" }}>
+        <UsageSummary {...usage} />
+      </div>
       {/* Header */}
       <div style={{ textAlign: "center", paddingTop: 80 }}>
         <h1

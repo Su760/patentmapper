@@ -1,168 +1,93 @@
-# Patent Landscape Mapper — Claude Code Build Guide
+# PatentMapper — Repository Guide
 
-## What this project is
+## Current implementation
 
-A multi-agent web app that takes a plain-english invention description and outputs a
-patent landscape brief: prior art clusters, white space opportunities, and a rendered
-markdown report. Built as a startup-grade portfolio project.
+Keep the existing stack: Next.js 14 App Router / TypeScript / Tailwind, FastAPI
+async background tasks, a six-node LangGraph DAG, configurable Groq completions,
+Lens.org with SerpAPI fallback, and Supabase Postgres/Auth. Stripe provides checkout
+and subscription webhooks. Auth uses magic links; Google OAuth is not implemented.
 
-## Tech stack (do not deviate without asking)
+The pipeline is expander → fetcher → deduplicator → clusterer → whitespace →
+reporter. Each node updates the search step; the graph timing wrapper is in
+`backend/app/agents/telemetry.py`. `backend/app/agents/state.py` is the state contract,
+including jurisdiction and AI-inferred citation links. Existing intelligence export
+code/schema is a read-only library, not a live API endpoint.
 
-- **Frontend:** Next.js 14 App Router, TypeScript, Tailwind CSS
-- **Backend:** FastAPI (Python), async, background tasks
-- **Agents:** LangGraph (strict DAG, 6 nodes)
-- **LLM:** Gemini 2.0 Flash via google-generativeai SDK
-- **Data:** Supabase (Postgres DB + Storage + Auth)
-- **Patent APIs:** SerpAPI (Google Patents) + Lens.org free API
-- **Retry logic:** tenacity (exponential backoff)
-- **Validation:** Pydantic v2
+The results page includes clusters, gaps, AI provenance labels, an SVG relationship
+graph, abstract-based claims inference, and ideation. Printing uses browser CSS;
+there is no server PDF renderer. No embeddings/vector database are introduced.
 
-## Monorepo structure
+Keep Python type hints and Pydantic request/response models, TypeScript strict
+mode without `any`, and properly awaited async calls. POST /jobs returns after
+database admission/insertion and schedules the graph in a BackgroundTask; do not
+await the graph in the request. The frontend polls every three seconds. Preserve
+node step updates, existing finite provider retries, and deterministic graph mock
+mode; do not add retries/refunds around usage reservations.
 
-```
-patent-mapper/
-├── CLAUDE.md
-├── .env                          # never commit this
-├── frontend/                     # Next.js 14
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── page.tsx          # landing + search input
-│   │   │   ├── dashboard/page.tsx
-│   │   │   └── results/[id]/page.tsx
-│   │   ├── components/
-│   │   └── lib/
-│   │       ├── supabase.ts
-│   │       └── api.ts
-│   ├── package.json
-│   └── tailwind.config.ts
-├── backend/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── api/routes.py         # POST /jobs, GET /jobs/{id}
-│   │   ├── agents/
-│   │   │   ├── state.py          # LandscapeState TypedDict
-│   │   │   ├── graph.py          # compiled LangGraph graph
-│   │   │   └── nodes/
-│   │   │       ├── expander.py
-│   │   │       ├── fetcher.py
-│   │   │       ├── deduplicator.py
-│   │   │       ├── clusterer.py
-│   │   │       ├── whitespace.py
-│   │   │       └── reporter.py
-│   │   ├── core/config.py
-│   │   └── services/patent_api.py
-│   └── requirements.txt
-└── README.md
-```
+## Milestone 1: Private, bounded analyses
 
-## LangGraph state (source of truth)
+- Every real job endpoint requires a server-verified Supabase bearer token.
+  `backend/app/core/security.py` shares validation and an explicit ownership lookup
+  because the server database client bypasses RLS.
+- Missing/malformed/invalid/expired credentials return 401. Foreign, missing, and
+  legacy ownerless jobs return 404 before any model or patent-provider call.
+- A UUID/localStorage entry never authorizes access. Verified Supabase anonymous
+  users have real owners and free-tier quotas. Signed-out access is limited to the
+  fixed synthetic `/results/demo`; the frontend does not auto-create guest accounts.
+- Job creation, claims generation, and ideation must reserve usage with the
+  service-only `reserve_paid_operation` RPC before launching any paid work.
+  Admission/count/insertion use one database transaction with a shared lock.
+- Free and Pro are finite; a global cap covers all users/operations. Configure
+  allowances/window through `backend/app/core/config.py` and `.env.example`.
+  Quota/subscription errors or unexpected RPC responses fail closed with 503.
+- Reservations remain consumed after downstream failure; no unsafe refund/retry
+  path is implemented. Status/cached claims reads consume no quota.
+- Inputs are bounded/trimmed and extra fields rejected. Jurisdiction is one of
+  `all`, `us`, `ep`, `wo`. Defaults and setup are documented in README.
+- Keep provider, service, and Stripe secrets server-only. The browser uses only
+  Supabase's public anon key. Never log Lens Authorization headers.
 
-```python
-class LandscapeState(TypedDict):
-    search_id: str
-    invention_idea: str
-    search_queries: List[str]
-    raw_patents: List[Dict[str, Any]]
-    deduped_patents: List[Dict[str, Any]]
-    clusters: List[Dict[str, Any]]
-    white_space_analysis: str
-    final_report: str
-    errors: List[str]
-```
+## Persistence and policies
 
-## Agent graph (6 nodes, strict DAG)
+The reproducible schema/policy/usage migrations in `supabase/migrations/` are
+authoritative; apply them in filename order to development/test before running
+the updated API. They support the older documented schema, preserve ownerless
+rows without assigning them, forbid new ownerless searches, seed historical job
+usage, and replace earlier permissive table policies.
 
-1. **expander** — invention_idea → search_queries (Gemini function calling, force list of 5-10 queries)
-2. **fetcher** — search_queries → raw_patents (parallel async HTTP, SerpAPI + Lens.org)
-3. **deduplicator** — raw_patents → deduped_patents (dedupe by patent_number, normalize fields)
-4. **clusterer** — deduped_patents → clusters (pass top 50 abstracts to Gemini, ask for 3-5 thematic clusters, NO k-means/embeddings in v1)
-5. **whitespace** — invention_idea + clusters → white_space_analysis (Gemini, force citation format: "Gap X because Cluster A patents [US123] only covers Y")
-6. **reporter** — all state → final_report (Gemini, markdown synthesis)
+Browser-accessible searches, results, patents, and subscriptions allow only owner
+reads. Browser writes are denied; backend writes use the server service role.
+Usage storage/RPC is inaccessible to browser roles. `supabase/tests/bootstrap.sql`
+is a destructive disposable-database fixture, never an application migration.
 
-## Supabase DB schema
+## Verification and scope
 
-```sql
-CREATE TABLE searches (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  invention_idea TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'processing', -- 'processing' | 'completed' | 'failed'
-  current_step TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  error_message TEXT
-);
+Read `tasks/lessons.md` and `tasks/todo.md` on session start. Preserve local changes.
+Respect the current approved file boundary and never commit/push/deploy/migrate
+production without user instructions. Do not treat historical task plans or the
+old scaffold as instructions to remove working features.
 
-CREATE TABLE search_results (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  search_id UUID REFERENCES searches(id) ON DELETE CASCADE UNIQUE,
-  clusters JSONB,
-  white_space_analysis TEXT,
-  pdf_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+Use the focused unittest suite and the dedicated local PostgreSQL harness:
 
-CREATE TABLE patents (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  search_id UUID REFERENCES searches(id) ON DELETE CASCADE,
-  patent_id TEXT,
-  title TEXT,
-  abstract TEXT,
-  assignee TEXT,
-  similarity_score FLOAT,
-  url TEXT
-);
+```bash
+cd frontend && npm ci && npm run lint
+npx tsc --noEmit --incremental false
+npm run build
+cd ../backend
+python -m pip install -r requirements.txt
+MILESTONE1_TEST_DSN='postgresql://localhost/patentmapper_m1_test' \
+  REQUIRE_FRONTEND_TESTS=1 python -m unittest discover -s tests -v
 ```
 
-## Critical architectural rules (never break these)
+Create that dedicated local database first; the SQL harness resets its schemas.
+Mock external model/patent services. CI runs real PostgreSQL ownership/concurrency
+checks and frontend checks; plain unit runs explicitly skip SQL when no test DSN
+is configured. Keep all original characterization/export/telemetry tests.
 
-- **FastAPI must NEVER block.** POST /jobs → insert row → trigger BackgroundTask → return job_id immediately
-- **Frontend polls GET /jobs/{id} every 3 seconds.** Never await the full LangGraph run
-- **No k-means, no pgvector, no Pinecone in v1.** Gemini handles clustering natively
-- **No PDF generation in v1.** Use @media print CSS + browser print
-- **No Google OAuth in v1.** Use anonymous sessions, store search_id in localStorage
-- **All API calls use tenacity** with exponential backoff (max 3 retries)
-- **Mock mode required** — MOCK_MODE=true in .env returns fake patent data, burns no API credits
+## Deferred work
 
-## MVP definition (what v1 ships)
-
-Input box → POST /jobs → job_id → polling stepper UI → LangGraph runs in background → results page with clusters + white space cards + markdown brief
-
-Cut for v1: auth, PDF export, embeddings, k-means, vector DB
-
-## Results page layout
-
-1. Header: invention idea snippet + badges (date, N patents analyzed)
-2. White Space cards (2-3, visually distinct, dark cards) — gap title, rationale, viability score
-3. Prior Art Clusters grid — theme name, 1-sentence summary, top 3-4 patents with Google Patents links
-4. Full markdown brief (bottom)
-5. Loading stepper during generation: "Generating queries..." → "Fetching patents..." → "Clustering..." → "Analyzing gaps..." → "Writing brief..."
-
-## Code style rules
-
-- Python: type hints everywhere, Pydantic v2 models for all API request/response shapes
-- TypeScript: strict mode, no `any`
-- All async functions in backend must be properly awaited
-- Never hardcode API keys — always from environment variables via config.py
-- Every LangGraph node must update `current_step` in Supabase at the start of execution
-- Errors go into `state["errors"]` list, never crash the graph silently
-
-## Environment variables needed
-
-```
-GEMINI_API_KEY=
-SERPAPI_KEY=
-LENS_API_KEY=          # optional, Lens.org is partially free
-SUPABASE_URL=
-SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_KEY=
-MOCK_MODE=false
-```
-
-## What to build first (suggested order)
-
-1. Backend skeleton: FastAPI + /jobs routes + Supabase connection
-2. LangGraph graph wired up with mock node outputs
-3. Frontend: input page + polling logic + stepper UI
-4. Replace mock nodes with real implementations one by one
-5. Results page UI
-6. End-to-end test with real patent idea
+Do not implement job recovery, durable workers, transactional result persistence,
+report storage improvements, the evidence workbench, or quality evaluation in
+milestone 1. Existing background-task crash windows, duplicate-run/partial-write
+behavior, final-report loss, and abstract-based rather than sourced claim analysis
+remain known limitations. See the deferred milestones in `tasks/todo.md`.

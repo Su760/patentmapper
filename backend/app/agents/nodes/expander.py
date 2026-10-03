@@ -2,7 +2,7 @@
 Query Expander Node
 In:  invention_idea
 Out: search_queries (5-10 queries)
-Real impl: Groq llama-3.3-70b-versatile (JSON-mode function calling to force a list)
+Real impl: configured Groq model with JSON mode to force a list
 """
 import json
 import logging
@@ -15,6 +15,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.core.config import settings
+from app.services.llm import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,8 @@ async def expander_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> List[Any]:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": state["invention_idea"]},

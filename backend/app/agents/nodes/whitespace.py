@@ -2,7 +2,7 @@
 White Space Analyzer Node
 In:  invention_idea + clusters
 Out: white_space_analysis (markdown with cited gaps)
-Real impl: Groq llama-3.3-70b-versatile with heavy citation mechanics
+Real impl: configured Groq model with heavy citation mechanics
 """
 import logging
 from typing import Any, Dict
@@ -14,6 +14,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.core.config import settings
+from app.services.llm import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ async def whitespace_node(state: LandscapeState, supabase: AsyncClient) -> Dict[
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> str:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},

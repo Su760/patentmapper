@@ -3,11 +3,12 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { getJobStatus } from "@/lib/api";
+import { DEMO_JOB_ID, DEMO_META } from "@/lib/demo";
 import { createClient } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 
-const JOBS_KEY = "patentmapper_job_ids";
+import { useUsage } from "@/lib/use-usage";
+import UsageSummary from "@/components/UsageSummary";
 
 interface DashboardItem {
   id: string;
@@ -90,8 +91,11 @@ function StatusBadge({ status }: { status: DashboardItem["status"] }) {
 
 function DashboardContent() {
   const searchParams = useSearchParams();
+  const usage = useUsage();
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const { user, loading: authLoading } = useAuth();
-  const [items, setItems] = useState<DashboardItem[]>([]);
+  const [storedItems, setItems] = useState<DashboardItem[]>([]);
+  const [itemsOwner, setItemsOwner] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showBanner, setShowBanner] = useState(false);
   const [filter, setFilter] = useState<
@@ -110,6 +114,11 @@ function DashboardContent() {
   useEffect(() => {
     if (authLoading) return;
 
+    let cancelled = false;
+    setItems([]);
+    setLoading(true);
+    setHistoryError(null);
+    setItemsOwner(user?.id ?? null);
     const client = createClient();
 
     if (user) {
@@ -121,7 +130,15 @@ function DashboardContent() {
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(20)
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (cancelled) return;
+          if (error) {
+            setHistoryError(
+              "Could not load your analyses. Reload to retry or sign in again.",
+            );
+            setLoading(false);
+            return;
+          }
           setItems(
             (data ?? []).map((row) => ({
               id: row.id as string,
@@ -135,56 +152,25 @@ function DashboardContent() {
           setLoading(false);
         });
     } else {
-      let ids: string[] = [];
-      try {
-        ids = JSON.parse(localStorage.getItem(JOBS_KEY) ?? "[]") as string[];
-      } catch {
-        ids = [];
-      }
-
-      if (ids.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      Promise.all([
-        Promise.all(ids.map((id) => getJobStatus(id).catch(() => null))),
-        Promise.all(
-          ids.map(async (id) => {
-            try {
-              const { data } = await client
-                .from("searches")
-                .select("invention_idea")
-                .eq("id", id)
-                .single();
-              return (
-                (data as { invention_idea: string } | null)?.invention_idea ??
-                null
-              );
-            } catch {
-              return null;
-            }
-          }),
-        ),
-      ]).then(([statuses, ideas]) => {
-        setItems(
-          ids.map((id, idx) => {
-            const s = statuses[idx];
-            return {
-              id,
-              status: s?.status ?? null,
-              current_step: s?.current_step ?? null,
-              error_message: s?.error_message ?? null,
-              inventionIdea: ideas[idx],
-              created_at: null,
-            };
-          }),
-        );
-        setLoading(false);
-      });
+      // localStorage job UUIDs do not authorize access to legacy/private searches.
+      setItems([
+        {
+          id: DEMO_JOB_ID,
+          status: "completed",
+          current_step: "done",
+          error_message: null,
+          inventionIdea: DEMO_META.invention_idea,
+          created_at: DEMO_META.created_at,
+        },
+      ]);
+      setLoading(false);
     }
+    return () => {
+      cancelled = true;
+    };
   }, [user, authLoading]);
 
+  const items = itemsOwner === (user?.id ?? null) ? storedItems : [];
   const filtered = items.filter(
     (item) =>
       (filter === "all" || item.status === filter) &&
@@ -223,7 +209,8 @@ function DashboardContent() {
               fontWeight: 500,
             }}
           >
-            Welcome to Pro! Unlimited analyses activated.
+            Checkout completed. Your plan and bounded allowance appear below
+            once confirmed.
           </div>
         </div>
       )}
@@ -234,7 +221,7 @@ function DashboardContent() {
           <div className="pm-dash-sub">
             {user
               ? "All past patent analyses from your account."
-              : "All past patent analyses from this browser."}
+              : "A fixed synthetic demo. Sign in for private analyses."}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -253,7 +240,7 @@ function DashboardContent() {
             ) : (
               <>
                 {items.length}
-                <span className="delta">this session</span>
+                <span className="delta">shown</span>
               </>
             )}
           </div>
@@ -269,21 +256,22 @@ function DashboardContent() {
         <div className="pm-dash-stat">
           <div className="label">Plan</div>
           <div className="value" style={{ fontSize: 18 }}>
-            {user ? "Pro" : "Free"}
-            {user && (
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                }}
-              >
-                {" "}
-                · $49/mo
-              </span>
-            )}
+            {user
+              ? usage.data?.plan === "pro"
+                ? "Pro"
+                : usage.data?.plan === "free"
+                  ? "Free"
+                  : "Unavailable"
+              : "Demo"}
           </div>
         </div>
+      </div>
+
+      <div style={{ padding: "16px 32px" }}>
+        <UsageSummary {...usage} />
+        {itemsOwner === (user?.id ?? null) && historyError && (
+          <p role="alert">{historyError}</p>
+        )}
       </div>
 
       <div className="pm-dash-toolbar">
@@ -379,7 +367,7 @@ function DashboardContent() {
           </div>
         )}
 
-        {!loading && !authLoading && items.length === 0 && (
+        {!loading && !authLoading && !historyError && items.length === 0 && (
           <div
             style={{
               textAlign: "center",

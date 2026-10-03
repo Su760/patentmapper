@@ -36,7 +36,7 @@ function saveJobId(jobId: string): void {
 
 export default function Home() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const [inventionText, setInventionText] = useState("");
   const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>("all");
   const [isLoading, setIsLoading] = useState(false);
@@ -45,21 +45,24 @@ export default function Home() {
 
   const charCount = inventionText.length;
   const isTooShort = charCount > 0 && charCount < MIN_CHARS;
-  const canSubmit = charCount >= MIN_CHARS && !isLoading;
+  const canSubmit =
+    !authLoading &&
+    !isLoading &&
+    (!session || (charCount >= MIN_CHARS && charCount <= MAX_CHARS));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
+    if (!session) {
+      router.push("/results/demo");
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
 
     try {
-      const { job_id } = await createJob(
-        inventionText,
-        jurisdiction,
-        session?.access_token,
-      );
+      const { job_id } = await createJob(inventionText, jurisdiction);
       saveJobId(job_id);
       router.push(`/results/${job_id}`);
     } catch (err) {
@@ -240,7 +243,7 @@ export default function Home() {
                     </>
                   ) : (
                     <>
-                      Analyze patents
+                      {session ? "Analyze patents" : "View synthetic demo"}
                       <span style={{ fontFamily: "var(--font-mono)" }}>→</span>
                     </>
                   )}
@@ -248,6 +251,14 @@ export default function Home() {
               </div>
             </div>
           </form>
+
+          {!session && !authLoading && (
+            <p style={{ color: "var(--text-2)", marginTop: 16 }}>
+              The demo is a fixed synthetic sample.{" "}
+              <Link href="/auth">Sign in</Link> to analyze your own invention
+              privately.
+            </p>
+          )}
 
           <div className="pm-stats">
             <div className="pm-stat">
@@ -322,8 +333,8 @@ export default function Home() {
                 lineHeight: 1.55,
               }}
             >
-              You&apos;ve used your 3 free analyses this month. Upgrade to Pro
-              for unlimited searches.
+              Your usage allowance has been reached. Pro includes a larger,
+              finite allowance; usage limits apply to every plan.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <Link
