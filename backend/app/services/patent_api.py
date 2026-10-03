@@ -101,7 +101,16 @@ async def fetch_serpapi_patents(
     resp.raise_for_status()
 
     results = []
-    for r in resp.json().get("organic_results", []):
+    data = resp.json()
+    status = (data.get("search_metadata") or {}).get("status") if isinstance(data, dict) else None
+    # SerpAPI documents Success + an error message for genuinely empty searches.
+    # Other error-shaped or unfinished responses are retrieval failures.
+    if not isinstance(data, dict) or status in ("Error", "Processing", "Queued") or (data.get("error") and status != "Success"):
+        raise ValueError("SerpAPI retrieval failed")
+    rows = data.get("organic_results", [] if status == "Success" else None)
+    if not isinstance(rows, list):
+        raise ValueError("SerpAPI response is missing patent results")
+    for r in rows:
         pub_info = r.get("publication_info", {})
         summary = pub_info.get("summary", "")
         assignee = summary.split(" · ")[0] if " · " in summary else summary
@@ -159,7 +168,10 @@ async def fetch_lens_patents(
     resp.raise_for_status()
 
     results = []
-    for r in resp.json().get("data", []):
+    data = resp.json()
+    if not isinstance(data, dict) or data.get("error") or data.get("errors") or not isinstance(data.get("data"), list):
+        raise ValueError("Lens response is missing patent results")
+    for r in data["data"]:
         lens_id = r.get("lens_id", "")
         url = f"https://lens.org/lens/patent/{lens_id}" if lens_id else ""
 

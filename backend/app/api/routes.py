@@ -17,6 +17,7 @@ from supabase import AsyncClient
 
 from app.agents.graph import build_graph
 from app.agents.state import LandscapeState
+from app.agents.nodes.fetcher import RetrievalFailure
 from app.core.config import settings
 from app.core.security import owned_job, require_bearer, require_user
 from app.db import get_supabase
@@ -98,47 +99,38 @@ async def _run_graph(search_id: str, invention_idea: str, jurisdiction: str, sup
         "white_space_analysis": "",
         "final_report": "",
         "errors": [],
+        "citation_links": [],
+        "retrieval_outcome": "complete",
+        "coverage_warnings": [],
     }
 
     try:
         graph = build_graph(supabase)
         final_state: LandscapeState = await graph.ainvoke(initial_state)
 
-        # Persist results to search_results table
-        await supabase.table("search_results").insert(
-            {
-                "search_id": search_id,
-                "clusters": final_state["clusters"],
-                "white_space_analysis": final_state["white_space_analysis"],
-                "citation_links": final_state.get("citation_links", []),
-            }
-        ).execute()
-
-        # Persist individual patents
-        if final_state["deduped_patents"]:
-            patent_rows = [
-                {
-                    "search_id": search_id,
-                    "patent_id": p.get("patent_id"),
-                    "title": p.get("title"),
-                    "abstract": p.get("abstract"),
-                    "assignee": p.get("assignee"),
-                    "url": p.get("url"),
-                }
-                for p in final_state["deduped_patents"]
-            ]
-            await supabase.table("patents").insert(patent_rows).execute()
-
-        await supabase.table("searches").update(
-            {"status": "completed", "current_step": "done"}
-        ).eq("id", search_id).execute()
+        # Only the database transaction may publish a terminal successful status.
+        await supabase.table("searches").update({"current_step": "finalizing"}).eq(
+            "id", search_id
+        ).eq("status", "processing").execute()
+        result = await supabase.rpc("finalize_analysis", {
+            "p_search_id": search_id,
+            "p_result": {key: final_state.get(key) for key in (
+                "clusters", "white_space_analysis", "final_report", "citation_links",
+                "retrieval_outcome", "coverage_warnings",
+            )},
+            "p_patents": final_state["deduped_patents"],
+        }).execute()
+        if result.data not in ("saved", "already_finalized"):
+            raise RuntimeError("Database finalization did not confirm success")
 
         logger.info("[routes] job %s completed", search_id)
 
     except Exception as exc:
         logger.exception("[routes] job %s failed: %s", search_id, exc)
         error_str = str(exc).lower()
-        if "429" in error_str or "rate limit" in error_str:
+        if isinstance(exc, RetrievalFailure):
+            friendly = str(exc)
+        elif "429" in error_str or "rate limit" in error_str:
             friendly = "Patent database temporarily unavailable. Please try again in a few minutes."
         elif any(kw in error_str for kw in ("groq", "llm", "json")):
             friendly = "AI analysis failed. Please try again — this sometimes happens with unusual invention descriptions."
@@ -148,7 +140,7 @@ async def _run_graph(search_id: str, invention_idea: str, jurisdiction: str, sup
             friendly = "Analysis failed. Please try again."
         await supabase.table("searches").update(
             {"status": "failed", "error_message": friendly}
-        ).eq("id", search_id).execute()
+        ).eq("id", search_id).eq("status", "processing").execute()
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -190,6 +182,8 @@ async def ideate_white_space(
     supabase: AsyncClient = Depends(get_supabase),
 ) -> Dict[str, Any]:
     """Generate a concrete invention idea for a white space opportunity using Groq."""
+    if job["status"] != "completed":
+        raise HTTPException(409, "This analysis has no completed evidence for ideation.")
     await reserve_usage(supabase, str(job["user_id"]), "ideation")
     prompt = (
         "You are a patent strategist. Given this white space opportunity "
@@ -241,6 +235,8 @@ async def analyze_claims(
     supabase: AsyncClient = Depends(get_supabase),
 ) -> Dict[str, Any]:
     """Analyze prior art claim overlap for a search's patents using Groq."""
+    if job["status"] != "completed":
+        raise HTTPException(409, "This analysis has no completed evidence for claims generation.")
     invention_idea = job["invention_idea"]
 
     patents_res = await supabase.table("patents").select("patent_id, title, abstract").eq("search_id", str(search_id)).limit(8).execute()

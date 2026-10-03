@@ -39,7 +39,11 @@ def build_graph(supabase: AsyncClient) -> Any:
     graph.add_edge(START, "expander")
     graph.add_edge("expander", "fetcher")
     graph.add_edge("fetcher", "deduplicator")
-    graph.add_edge("deduplicator", "clusterer")
+    graph.add_conditional_edges(
+        "deduplicator",
+        lambda state: "clusterer" if state["deduped_patents"] else END,
+        {"clusterer": "clusterer", END: END},
+    )
     graph.add_edge("clusterer", "whitespace")
     graph.add_edge("whitespace", "reporter")
     graph.add_edge("reporter", END)

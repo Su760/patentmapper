@@ -3,12 +3,42 @@ import { DEMO_JOB_ID, DEMO_IDEA, DEMO_CLAIMS } from "@/lib/demo";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
-async function authHeaders(jwt?: string): Promise<Record<string, string>> {
-  const { data, error } = await createClient().auth.getSession();
+async function authHeaders(
+  jwt?: string,
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
+  // Supabase session refresh has no AbortSignal API. Stop waiting on cancellation
+  // so a late session response cannot launch an obsolete paid request.
+  if (signal?.aborted)
+    throw Object.assign(new Error("Request cancelled."), {
+      name: "AbortError",
+    });
+  const session = createClient().auth.getSession();
+  const { data, error } = await new Promise<Awaited<typeof session>>(
+    (resolve, reject) => {
+      const abort = () =>
+        reject(
+          Object.assign(new Error("Request cancelled."), {
+            name: "AbortError",
+          }),
+        );
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
+      session
+        .then(resolve, reject)
+        .finally(() => signal?.removeEventListener("abort", abort));
+    },
+  );
   const token = jwt ?? data.session?.access_token;
   if (error || !token)
-    throw new Error(
-      "Sign in to access private analyses, or view the synthetic demo.",
+    throw Object.assign(
+      new Error(
+        "Sign in to access private analyses, or view the synthetic demo.",
+      ),
+      { status: 401 },
     );
   return {
     "Content-Type": "application/json",
@@ -19,15 +49,22 @@ async function authHeaders(jwt?: string): Promise<Record<string, string>> {
 async function requireOK(res: Response): Promise<void> {
   if (res.ok) return;
   if (res.status === 401)
-    throw new Error("Your session is missing or expired. Sign in again.");
+    throw Object.assign(
+      new Error("Your session is missing or expired. Sign in again."),
+      { status: 401 },
+    );
   if (res.status === 404)
-    throw new Error("This analysis is unavailable to your account.");
+    throw Object.assign(
+      new Error("This analysis is unavailable to your account."),
+      { status: 404 },
+    );
   const data = (await res.json().catch(() => ({}))) as {
     detail?: string | { message?: string };
   };
   const message =
     typeof data.detail === "string" ? data.detail : data.detail?.message;
   throw Object.assign(new Error(message ?? `Request failed (${res.status}).`), {
+    status: res.status,
     code: res.status === 402 ? "limit_reached" : undefined,
   });
 }
@@ -39,7 +76,7 @@ export interface JobCreatedResponse {
 
 export interface JobStatusResponse {
   job_id: string;
-  status: "processing" | "completed" | "failed";
+  status: "processing" | "completed" | "insufficient_evidence" | "failed";
   current_step: string | null;
   error_message: string | null;
 }
@@ -75,7 +112,10 @@ export async function createCheckoutSession(
   return res.json() as Promise<{ checkout_url: string }>;
 }
 
-export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
+export async function getJobStatus(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<JobStatusResponse> {
   if (jobId === DEMO_JOB_ID)
     return {
       job_id: DEMO_JOB_ID,
@@ -84,7 +124,8 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
       error_message: null,
     };
   const res = await fetch(`${API_BASE}/jobs/${jobId}`, {
-    headers: await authHeaders(),
+    signal,
+    headers: await authHeaders(undefined, signal),
     cache: "no-store",
   });
   await requireOK(res);
@@ -104,11 +145,13 @@ export async function ideateWhiteSpace(
   searchId: string,
   title: string,
   description: string,
+  signal?: AbortSignal,
 ): Promise<WhiteSpaceIdea> {
   if (searchId === DEMO_JOB_ID) return structuredClone(DEMO_IDEA);
   const res = await fetch(`${API_BASE}/jobs/${searchId}/ideate`, {
+    signal,
     method: "POST",
-    headers: await authHeaders(),
+    headers: await authHeaders(undefined, signal),
     body: JSON.stringify({
       white_space_title: title,
       white_space_description: description,
@@ -129,11 +172,13 @@ export interface ClaimResult {
 
 export async function analyzeClaimsRequest(
   searchId: string,
+  signal?: AbortSignal,
 ): Promise<{ claims: ClaimResult[] }> {
   if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
+    signal,
     method: "POST",
-    headers: await authHeaders(),
+    headers: await authHeaders(undefined, signal),
   });
   await requireOK(res);
   return res.json() as Promise<{ claims: ClaimResult[] }>;
@@ -141,11 +186,13 @@ export async function analyzeClaimsRequest(
 
 export async function getClaimsAnalysis(
   searchId: string,
+  signal?: AbortSignal,
 ): Promise<{ claims: ClaimResult[] | null }> {
   if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
-    headers: await authHeaders(),
+    headers: await authHeaders(undefined, signal),
     cache: "no-store",
+    signal,
   });
   await requireOK(res);
   return res.json() as Promise<{ claims: ClaimResult[] | null }>;

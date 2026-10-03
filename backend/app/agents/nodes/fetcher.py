@@ -114,6 +114,10 @@ MOCK_PATENTS: List[Dict[str, Any]] = [
 ]
 
 
+class RetrievalFailure(RuntimeError):
+    """Every attempted provider request failed; empty evidence is not established."""
+
+
 async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str, Any]:
     """Fetch raw patents for each search query."""
     search_id = state["search_id"]
@@ -129,45 +133,44 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
 
     if settings.mock_mode:
         logger.info("[fetcher] mock mode — returning %d patents", len(MOCK_PATENTS))
-        return {"raw_patents": MOCK_PATENTS}
+        return {"raw_patents": MOCK_PATENTS, "retrieval_outcome": "complete", "coverage_warnings": []}
 
     queries = state["search_queries"]
+    if not queries:
+        raise RetrievalFailure("Patent retrieval failed: no search queries were generated. No providers were called.")
 
     jurisdiction = state.get("jurisdiction", "all")
 
     async def _fetch_with_fallback(
         client: httpx.AsyncClient, query: str
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], int, int]:
         async with _SEMAPHORE:
-            # Priority 1: Lens.org
-            logger.info("[fetcher] querying Lens.org for: %s", query)
+            successes, failures = 0, 0
             try:
-                results: List[Dict[str, Any]] = await fetch_lens_patents(
-                    query, client, api_key=settings.lens_api_key
-                )
-                logger.info("[fetcher] Lens.org returned %d results", len(results))
+                results = await fetch_lens_patents(query, client, api_key=settings.lens_api_key)
+                successes += 1
                 if results:
-                    return results
-            except Exception as e:
-                logger.warning("[fetcher] Lens.org failed, falling back to SerpAPI: %s", e)
-            # Priority 2: SerpAPI fallback
+                    return results, successes, failures
+            except Exception:
+                failures += 1
+                logger.warning("[fetcher] Lens request failed; checking configured fallback")
             if settings.serpapi_enabled:
-                logger.info("[fetcher] Lens.org failed, falling back to SerpAPI for: %s", query)
                 try:
-                    return await fetch_serpapi_patents(
-                        query, client, settings.serpapi_key, jurisdiction
-                    )
-                except Exception as e:
-                    logger.warning("[fetcher] SerpAPI also failed for query '%s': %s", query, e)
-            return []
+                    results = await fetch_serpapi_patents(query, client, settings.serpapi_key, jurisdiction)
+                    return results, successes + 1, failures
+                except Exception:
+                    failures += 1
+                    logger.warning("[fetcher] SerpAPI request failed")
+            return [], successes, failures
 
     async with httpx.AsyncClient() as client:
-        tasks = [_fetch_with_fallback(client, q) for q in queries]
-        results_per_query = await asyncio.gather(*tasks)
-
-    raw_patents: List[Dict[str, Any]] = []
-    for result in results_per_query:
-        raw_patents.extend(result)
-
-    logger.info("[fetcher] real mode — fetched %d patents", len(raw_patents))
-    return {"raw_patents": raw_patents}
+        outcomes = await asyncio.gather(*(_fetch_with_fallback(client, q) for q in queries))
+    if not any(successes for _, successes, _ in outcomes):
+        raise RetrievalFailure("Patent retrieval failed: all attempted providers failed. No conclusions were generated.")
+    raw_patents = [patent for patents, _, _ in outcomes for patent in patents]
+    failures = sum(failed for _, _, failed in outcomes)
+    warnings = (["Some patent provider requests failed. Coverage is incomplete; conclusions use only the available results."]
+                if failures else [])
+    return {"raw_patents": raw_patents,
+            "retrieval_outcome": ("partial" if failures else "complete") if raw_patents else "insufficient_evidence",
+            "coverage_warnings": warnings}

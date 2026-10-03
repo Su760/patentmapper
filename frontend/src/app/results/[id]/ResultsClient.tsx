@@ -3,11 +3,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   getJobStatus,
+  getClaimsAnalysis,
   ideateWhiteSpace,
   WhiteSpaceIdea,
   analyzeClaimsRequest,
   ClaimResult,
 } from "@/lib/api";
+import { RESULTS_POLLING } from "@/lib/results-config";
+import { startJobPolling } from "@/lib/poll-job";
 import { createClient } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 import { DEMO_JOB_ID, DEMO_META, DEMO_RESULTS } from "@/lib/demo";
@@ -16,7 +19,13 @@ import "./print.css";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Phase = "init" | "polling" | "loading_results" | "completed" | "failed";
+type Phase =
+  | "init"
+  | "polling"
+  | "loading_results"
+  | "completed"
+  | "failed"
+  | "unavailable";
 
 interface Cluster {
   theme_name: string;
@@ -36,6 +45,9 @@ interface CitationLink {
 interface SearchResult {
   clusters: Cluster[];
   white_space_analysis: string;
+  final_report?: string | null;
+  retrieval_outcome?: string | null;
+  coverage_warnings?: string[];
   citation_links?: CitationLink[];
 }
 
@@ -66,12 +78,9 @@ const STEPS = [
   { key: "clustering", label: "Clustering by theme..." },
   { key: "analyzing_gaps", label: "Analyzing white space..." },
   { key: "writing_report", label: "Writing your brief..." },
+  { key: "finalizing", label: "Saving results..." },
   { key: "done", label: "Complete!" },
 ] as const;
-
-const STEPPER_MIN_MS = 1500;
-const SIMULATE_INTERVAL_MS = 2000;
-const POLL_INTERVAL_MS = 3000;
 
 const CLUSTER_COLORS = [
   "#3b82f6",
@@ -197,6 +206,7 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
         return (
           <div
             key={step.key}
+            aria-current={isActive ? "step" : undefined}
             style={{
               display: "flex",
               alignItems: "flex-start",
@@ -964,7 +974,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const [renderScope, setRenderScope] = useState("");
   const [phase, setPhase] = useState<Phase>("init");
   const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [simulatedStepIdx, setSimulatedStepIdx] = useState(0);
+  const [pollNotice, setPollNotice] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [inventionIdea, setInventionIdea] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
@@ -978,77 +989,73 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   );
   const [ideas, setIdeas] = useState<Record<string, WhiteSpaceIdea>>({});
   const [analyzingClaims, setAnalyzingClaims] = useState(false);
-  const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(null);
+  const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(
+    null,
+  );
   const [claimsError, setClaimsError] = useState<string | null>(null);
 
-  const stepperStartedAt = useRef<number>(0);
+  const [claimsCacheReady, setClaimsCacheReady] = useState(false);
+  const lifecycle = useRef<AbortController | null>(null);
+  const epoch = useRef(0);
+  const claimsPending = useRef(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout>>();
   const claimsSectionRef = useRef<HTMLElement | null>(null);
 
-  // Fetch invention_idea early so loading_results screen has context
-  const fetchInventionIdea = useCallback(async () => {
-    const scope = accessScope.current;
-    if (jobId === DEMO_JOB_ID) {
-      setInventionIdea(DEMO_META.invention_idea);
-      return;
-    }
-    const client = createClient();
-    const { data } = await client
-      .from("searches")
-      .select("invention_idea")
-      .eq("id", jobId)
-      .single();
-    if (scope === accessScope.current && data?.invention_idea)
-      setInventionIdea(data.invention_idea);
-  }, [jobId]);
-
-  const loadResults = useCallback(async () => {
-    const scope = accessScope.current;
-    if (jobId === DEMO_JOB_ID) {
-      setSearchMeta(DEMO_META);
-      setSearchResult(DEMO_RESULTS);
-      setPhase("completed");
-      return;
-    }
-    const client = createClient();
-    const [searchRes, resultsRes] = await Promise.all([
-      client
-        .from("searches")
-        .select("invention_idea, created_at")
-        .eq("id", jobId)
-        .single(),
-      client
-        .from("search_results")
-        .select("clusters, white_space_analysis, citation_links")
-        .eq("search_id", jobId)
-        .single(),
-    ]);
-
-    if (scope !== accessScope.current) return;
-
-    if (searchRes.error || resultsRes.error) {
-      setErrorMessage("Could not load results from database.");
-      setPhase("failed");
-      return;
-    }
-
-    setSearchMeta(searchRes.data as SearchMeta);
-    setSearchResult(resultsRes.data as SearchResult);
-    setPhase("completed");
-  }, [jobId]);
+  const loadCachedClaims = useCallback(
+    async (signal: AbortSignal, version: number) => {
+      if (signal.aborted) return;
+      const scope = accessScope.current;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const timeout = setTimeout(abort, RESULTS_POLLING.timeoutMs);
+      const current = () =>
+        !signal.aborted &&
+        epoch.current === version &&
+        scope === accessScope.current;
+      setClaimsCacheReady(false);
+      setClaimsError(null);
+      try {
+        const { claims } = await getClaimsAnalysis(jobId, controller.signal);
+        if (!current() || signal.aborted) return;
+        setClaimsAnalysis(claims);
+        setClaimsCacheReady(true);
+      } catch (error) {
+        if (!current() || signal.aborted) return;
+        setClaimsError(
+          controller.signal.aborted
+            ? "Saved claims timed out. Retry saved claims; no generation was requested."
+            : error instanceof Error
+              ? error.message
+              : "Could not load saved claims.",
+        );
+      } finally {
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", abort);
+      }
+    },
+    [jobId],
+  );
 
   async function handleIdeate(gap: WhiteSpaceGap) {
     const scope = accessScope.current;
-    const key = `${scope}:${gap.title}`;
+    const version = epoch.current;
+    const key = `${version}:${scope}:${gap.title}`;
     if (pendingIdeations.current.has(key)) return;
     pendingIdeations.current.add(key);
     setIdeating((prev) => ({ ...prev, [gap.title]: true }));
     setIdeationErrors((prev) => ({ ...prev, [gap.title]: "" }));
     try {
-      const idea = await ideateWhiteSpace(jobId, gap.title, gap.description);
-      if (scope !== accessScope.current) return;
+      const idea = await ideateWhiteSpace(
+        jobId,
+        gap.title,
+        gap.description,
+        lifecycle.current?.signal,
+      );
+      if (scope !== accessScope.current || version !== epoch.current) return;
       setIdeas((prev) => ({ ...prev, [gap.title]: idea }));
     } catch (e) {
-      if (scope === accessScope.current)
+      if (scope === accessScope.current && version === epoch.current)
         setIdeationErrors((prev) => ({
           ...prev,
           [gap.title]:
@@ -1058,28 +1065,33 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         }));
     } finally {
       pendingIdeations.current.delete(key);
-      if (scope === accessScope.current)
+      if (scope === accessScope.current && version === epoch.current)
         setIdeating((prev) => ({ ...prev, [gap.title]: false }));
     }
   }
 
   async function handleAnalyzeClaims() {
     const scope = accessScope.current;
+    if (claimsPending.current || !claimsCacheReady) return;
+    claimsPending.current = true;
+    const version = epoch.current;
     setAnalyzingClaims(true);
     setClaimsError(null);
     try {
-      const { claims } = await analyzeClaimsRequest(jobId);
-      if (scope !== accessScope.current) return;
-      setClaimsAnalysis(claims);
-      setTimeout(
-        () => claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" }),
-        100,
+      const { claims } = await analyzeClaimsRequest(
+        jobId,
+        lifecycle.current?.signal,
       );
+      if (scope !== accessScope.current || version !== epoch.current) return;
+      setClaimsAnalysis(claims);
     } catch (e) {
-      if (scope === accessScope.current)
+      if (scope === accessScope.current && version === epoch.current)
         setClaimsError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
-      if (scope === accessScope.current) setAnalyzingClaims(false);
+      if (scope === accessScope.current && version === epoch.current) {
+        claimsPending.current = false;
+        setAnalyzingClaims(false);
+      }
     }
   }
 
@@ -1092,119 +1104,131 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }
 
   async function handleCopyLink() {
+    const version = epoch.current;
+    const scope = accessScope.current;
     await navigator.clipboard.writeText(window.location.href);
+    if (version !== epoch.current || scope !== accessScope.current) return;
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 2000);
   }
 
-  // ── Effect 1: Initial status check on mount ──
   useEffect(() => {
     if (authLoading && !isDemo) return;
-    setRenderScope(accessScope.current);
+    const version = ++epoch.current;
+    const scope = accessScope.current;
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    const current = () =>
+      !controller.signal.aborted &&
+      version === epoch.current &&
+      scope === accessScope.current;
+    setRenderScope(scope);
     setSearchMeta(null);
     setSearchResult(null);
     setClaimsAnalysis(null);
+    setClaimsCacheReady(false);
     setIdeas({});
     setInventionIdea(null);
     setSelectedNode(null);
     setIdeating({});
     setIdeationErrors({});
     setAnalyzingClaims(false);
+    claimsPending.current = false;
     setClaimsError(null);
+    setPollNotice(null);
+    setErrorMessage(null);
+    setCurrentStep(null);
+    setPhase("init");
+    let stop = () => {};
     if (!isDemo && !userId) {
       setErrorMessage(
         "Sign in to access this private analysis. A job link alone does not grant access.",
       );
-      setPhase("failed");
-      return;
-    }
-    let cancelled = false;
-    setPhase("init");
-    getJobStatus(jobId)
-      .then((status) => {
-        if (cancelled) return;
-        if (status.status === "completed") {
-          // Already done — skip stepper, go straight to loading_results
+      setPhase("unavailable");
+    } else {
+      stop = startJobPolling({
+        read: (signal) => getJobStatus(jobId, signal),
+        onStatus: async (status, signal) => {
+          if (!current() || signal.aborted) return;
+          setPollNotice(null);
+          setCurrentStep(status.current_step);
+          if (status.status === "processing") {
+            setPhase("polling");
+            return;
+          }
+          if (status.status === "failed") {
+            setErrorMessage(status.error_message ?? "Analysis failed.");
+            setPhase("failed");
+            return;
+          }
           setPhase("loading_results");
-          fetchInventionIdea();
-          loadResults();
-        } else if (status.status === "failed") {
-          setErrorMessage(status.error_message ?? "Analysis failed.");
-          setPhase("failed");
-        } else {
-          // processing — show stepper, record start time
-          setCurrentStep(status.current_step);
-          stepperStartedAt.current = Date.now();
-          setPhase("polling");
-        }
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Could not access this analysis.",
-        );
-        setPhase("failed");
+          if (isDemo) {
+            setSearchMeta(DEMO_META);
+            setSearchResult(DEMO_RESULTS);
+          } else {
+            const client = createClient();
+            const [search, result] = await Promise.all([
+              client
+                .from("searches")
+                .select("invention_idea, created_at")
+                .eq("id", jobId)
+                .abortSignal(signal)
+                .single(),
+              client
+                .from("search_results")
+                .select(
+                  "clusters, white_space_analysis, final_report, citation_links, retrieval_outcome, coverage_warnings",
+                )
+                .eq("search_id", jobId)
+                .abortSignal(signal)
+                .single(),
+            ]);
+            if (!current() || signal.aborted) return;
+            if (search.error || result.error)
+              throw new Error(
+                "Saved results could not be loaded. Retry status to reload them without generating anything.",
+              );
+            setSearchMeta(search.data as SearchMeta);
+            setInventionIdea(search.data.invention_idea);
+            setSearchResult(result.data as SearchResult);
+          }
+          if (!current() || signal.aborted) return;
+          setPhase("completed");
+          // Viewing saved claims never calls the paid generation endpoint.
+          void loadCachedClaims(controller.signal, version);
+        },
+        onError: (message, stopped, unauthorized) => {
+          if (!current()) return;
+          if (stopped) {
+            setErrorMessage(message);
+            setPhase("unavailable");
+          } else {
+            setPollNotice(
+              `Status unavailable: ${message} Retrying automatically (read only).`,
+            );
+            setPhase("polling");
+          }
+          if (unauthorized) {
+            setSearchResult(null);
+            setClaimsAnalysis(null);
+          }
+        },
       });
+    }
     return () => {
-      cancelled = true;
+      epoch.current = version + 1;
+      controller.abort();
+      stop();
+      clearTimeout(copyTimer.current);
     };
-  }, [jobId, fetchInventionIdea, loadResults, authLoading, isDemo, userId]);
+  }, [jobId, userId, authLoading, isDemo, reload, loadCachedClaims]);
 
-  // ── Effect 2: Simulated step animation while polling ──
-  useEffect(() => {
-    if (phase !== "polling") return;
-
-    const id = setInterval(() => {
-      setSimulatedStepIdx((prev) => Math.min(prev + 1, STEPS.length - 2));
-    }, SIMULATE_INTERVAL_MS);
-
-    return () => clearInterval(id);
-  }, [phase]);
-
-  // ── Effect 3: Real status polling while polling ──
-  useEffect(() => {
-    if (phase !== "polling") return;
-
-    const scope = accessScope.current;
-    const intervalId = setInterval(async () => {
-      try {
-        const status = await getJobStatus(jobId);
-        if (scope !== accessScope.current) return;
-
-        if (status.status === "completed") {
-          clearInterval(intervalId);
-          // Enforce minimum stepper display time
-          const elapsed = Date.now() - stepperStartedAt.current;
-          const delay = Math.max(0, STEPPER_MIN_MS - elapsed);
-          setTimeout(() => {
-            if (scope !== accessScope.current) return;
-            setPhase("loading_results");
-            fetchInventionIdea();
-            loadResults();
-          }, delay);
-        } else if (status.status === "failed") {
-          clearInterval(intervalId);
-          setErrorMessage(status.error_message ?? "Analysis failed.");
-          setPhase("failed");
-        } else {
-          setCurrentStep(status.current_step);
-        }
-      } catch (err) {
-        if (scope !== accessScope.current) return;
-        clearInterval(intervalId);
-        setErrorMessage(
-          err instanceof Error
-            ? err.message
-            : "Could not access this analysis.",
-        );
-        setPhase("failed");
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(intervalId);
-  }, [phase, jobId, fetchInventionIdea, loadResults, userId]);
+  async function retryCachedClaims() {
+    const controller = lifecycle.current;
+    if (!controller) return;
+    await loadCachedClaims(controller.signal, epoch.current);
+  }
 
   // ── Init UI (brief spinner while first poll resolves) ──
   if (renderScope !== accessScope.current) return null;
@@ -1235,10 +1259,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Polling UI ──
   if (phase === "polling") {
     const realStepIdx = STEPS.findIndex((s) => s.key === currentStep);
-    const displayStepIdx = Math.max(
-      simulatedStepIdx,
-      realStepIdx < 0 ? 0 : realStepIdx,
-    );
+    const displayStepIdx = realStepIdx;
 
     return (
       <main
@@ -1251,6 +1272,12 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           padding: "64px 16px",
         }}
       >
+        {pollNotice && (
+          <p role="alert" style={{ padding: 16 }}>
+            {pollNotice}
+          </p>
+        )}
+        {!currentStep && <p>Waiting for a saved backend stage.</p>}
         <div
           style={{
             maxWidth: 672,
@@ -1270,7 +1297,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             Analyzing your invention...
           </h1>
           <p style={{ color: "var(--text-3)", fontSize: 14 }}>
-            This usually takes 15–60 seconds.
+            Progress reflects stages saved by the server.
           </p>
         </div>
         <Stepper stepIdx={displayStepIdx} />
@@ -1310,7 +1337,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Compiling your results...
+            Loading saved results...
           </h2>
           {inventionIdea && (
             <p
@@ -1329,7 +1356,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }
 
   // ── Error UI ──
-  if (phase === "failed") {
+  if (phase === "failed" || phase === "unavailable") {
     return (
       <main
         style={{
@@ -1362,14 +1389,19 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Analysis Failed
+            {phase === "failed" ? "Analysis failed" : "Analysis unavailable"}
           </h2>
           <p style={{ color: "var(--text-2)", fontSize: 14, marginBottom: 24 }}>
             {errorMessage ?? "An unknown error occurred."}
           </p>
-          <a href="/" className="pm-btn sm">
-            ← Try again
-          </a>
+          <button
+            className="pm-btn sm"
+            onClick={() => setReload((value) => value + 1)}
+          >
+            Retry status
+          </button>
+          <p>Checks saved status only; no paid work is started.</p>
+          <a href="/auth">Sign in</a> · <a href="/">New analysis</a>
         </div>
       </main>
     );
@@ -1378,7 +1410,11 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Completed Results ──
   if (!searchResult || !searchMeta) return null;
 
-  const gaps = parseWhiteSpace(searchResult.white_space_analysis ?? "");
+  const insufficient =
+    searchResult.retrieval_outcome === "insufficient_evidence";
+  const gaps = insufficient
+    ? []
+    : parseWhiteSpace(searchResult.white_space_analysis ?? "");
   const clusters: Cluster[] = Array.isArray(searchResult.clusters)
     ? searchResult.clusters
     : [];
@@ -1436,47 +1472,29 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           <button className="pm-btn sm print:hidden" onClick={handleCopyLink}>
             {copied ? "Copied!" : "Share"}
           </button>
-          <button
-            className="pm-btn sm print:hidden"
-            onClick={handleAnalyzeClaims}
-            disabled={analyzingClaims}
-          >
-            {analyzingClaims ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg
-                  className="animate-spin"
-                  width={12}
-                  height={12}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                Analyzing...
-              </span>
-            ) : (
-              "⚖ Claims"
-            )}
-          </button>
+          {!insufficient && (
+            <button
+              className="pm-btn sm print:hidden"
+              onClick={() =>
+                claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" })
+              }
+            >
+              ⚖ Claims
+            </button>
+          )}
         </div>
       </div>
-      {claimsError && (
-        <div
-          style={{
-            background: "rgba(239,68,68,0.08)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 8,
-            padding: "8px 16px",
-            margin: "8px 32px 0",
-            color: "var(--red, #ef4444)",
-            fontSize: 13,
-          }}
-        >
-          Claim analysis failed: {claimsError}
-        </div>
+      {insufficient && (
+        <p role="status" style={{ padding: 32 }}>
+          Insufficient evidence: retrieval succeeded but no usable patents were
+          found. No gap, report, or claims conclusions were generated.
+        </p>
       )}
+      {(searchResult.coverage_warnings ?? []).map((warning, index) => (
+        <p role="status" key={index} style={{ padding: "8px 32px" }}>
+          {warning}
+        </p>
+      ))}
 
       {/* Section 01: White Space Opportunities */}
       {gaps.length > 0 && (
@@ -1649,7 +1667,15 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             padding: 32,
           }}
         >
-          <MarkdownRenderer content={searchResult.white_space_analysis ?? ""} />
+          {searchResult.final_report ? (
+            <MarkdownRenderer content={searchResult.final_report} />
+          ) : (
+            <p>
+              {insufficient
+                ? "A full report is unavailable because there is insufficient evidence."
+                : "No saved full report is available for this older analysis."}
+            </p>
+          )}
         </div>
         <div
           className="print:block"
@@ -1665,7 +1691,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       </section>
 
       {/* Section 06: Claim Analysis */}
-      {claimsAnalysis && (
+      {!insufficient && (
         <section className="pm-section" ref={claimsSectionRef}>
           <div className="pm-section-head">
             <div className="pm-section-title">
@@ -1673,11 +1699,54 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               <h2>Claim analysis</h2>
             </div>
             <div className="pm-section-aside">
-              <span>Prior art overlap with your invention — not legal advice</span>
+              <span>
+                Prior art overlap with your invention — not legal advice
+              </span>
             </div>
           </div>
+          <p>
+            {isDemo
+              ? "Fixed synthetic sample; no usage consumed."
+              : "Uses 1 claims allowance per generation or regeneration. Failed paid attempts also count. Reading saved claims is free."}
+          </p>
+          {claimsError && (
+            <p role="alert">Claim analysis unavailable: {claimsError}</p>
+          )}
+          {!claimsCacheReady ? (
+            <>
+              {!claimsError && <p>Loading saved claims...</p>}
+              {claimsError && (
+                <button className="pm-btn" onClick={retryCachedClaims}>
+                  Retry saved claims
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              {claimsAnalysis === null && (
+                <p>
+                  No saved claims analysis. Generate it explicitly when you are
+                  ready.
+                </p>
+              )}
+              {claimsAnalysis?.length === 0 && (
+                <p>The saved claims analysis contains no claims.</p>
+              )}
+              <button
+                className="pm-btn"
+                disabled={analyzingClaims}
+                onClick={handleAnalyzeClaims}
+              >
+                {analyzingClaims
+                  ? "Generating claims..."
+                  : claimsAnalysis === null
+                    ? "Generate claims"
+                    : "Regenerate claims"}
+              </button>
+            </>
+          )}
           <div className="pm-cluster-grid">
-            {claimsAnalysis.map((claim) => (
+            {(claimsAnalysis ?? []).map((claim) => (
               <ClaimCard key={claim.patent_id} claim={claim} />
             ))}
           </div>

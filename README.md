@@ -80,21 +80,21 @@ User Input (plain-English invention description)
   └─────────────────────────────────────────────────────────────────┘
         │
         ▼
-  Supabase  ──►  searches         (status: completed)
+  finalize_analysis transaction ──► searches (completed / insufficient_evidence)
                  search_results   (clusters, white_space_analysis,
-                                   citation_links JSONB)
+                                   final_report, citation_links, coverage warnings)
                  patents          (individual rows per deduped patent)
         │
         ▼
   Next.js Frontend
-        │  polls GET /jobs/{id} every 3s
+        │  bounded sequential GET /jobs/{id}, 3s between requests
         │  stepper UI tracks current_step from DB
         ▼
   Results page:
     White Space Opportunity cards (viability-scored)
     Prior Art Cluster grid (IPC codes + assignees + patent links)
     Force-directed Citation Graph (node color = cluster, click for details)
-    (Full markdown brief is generated in the graph but not yet persisted)
+    Saved full markdown brief + cached claims (GET only on reopen)
 ```
 
 ---
@@ -154,9 +154,11 @@ Apply the checked-in migrations to a **development/test Supabase project** befor
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020001_private_analyses.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020002_bounded_usage.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020003_usage_snapshot.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610030001_saved_results.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema'"
 ```
 
-Alternatively, execute those three files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
+Alternatively, execute those four files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
 
 ### 3. Frontend setup
 
@@ -231,6 +233,16 @@ Default allowances in `.env.example` / `backend/app/core/config.py`:
 
 Invention input is trimmed and limited to 20–2000 characters. Ideation titles/descriptions are trimmed, nonempty, and limited to 200/4000 characters. Those limits are configurable through the corresponding variables in `.env.example`; keep the frontend's existing 20–2000 character UI consistent if changing the server limits. Jurisdiction must be `all`, `us`, `ep`, or `wo`. Unsupported fields/inputs return 422 before paid work.
 
+## Reliable saved results (M2a)
+
+`final_report` is saved separately from `white_space_analysis` and displayed in Full analysis brief. Older rows without it show an unavailable state; opening a result never regenerates a report or claims. Claims are loaded through the authenticated cached GET; generation/regeneration requires an explicit action and consumes one claims reservation, including failed paid attempts. Anonymous sessions must sign in/create a permanent account before Stripe checkout.
+
+The browser displays persisted stages, uses one sequential status request at a time, times out reads after 15 seconds, pauses after three consecutive failures or 120 status requests, and cancels requests/timers on navigation or account changes. Retry status and Retry saved claims perform free reads only. Limits are in `frontend/src/lib/results-config.ts`.
+
+If all provider attempts fail, the search fails explicitly. Successful retrieval with no usable patents (nonempty ID plus title or abstract) finishes as `insufficient_evidence` without clustering/gap/report/claims generation. Partial retrieval retains available evidence with saved coverage warnings. The original semaphore of five and finite provider retries remain.
+
+The service-only `finalize_analysis` RPC locks the search and atomically saves result/patent rows and completion. Successful terminal retries are no-ops; failed writes roll back. Retrying a retained finalization payload is permitted after failure, but no automatic paid retry or restart recovery exists. The transaction ignores provider-supplied row/search IDs and preserves cached claims. Existing browser RLS applies to new report fields.
+
 ## Checks and local database regressions
 
 ```bash
@@ -243,7 +255,7 @@ python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
 
-The last command skips SQL integration unless `MILESTONE1_TEST_DSN` is set. To run **all** checks locally, create a disposable PostgreSQL database named exactly `patentmapper_m1_test` on a local cluster:
+The last command skips SQL integration unless `MILESTONE1_TEST_DSN` is set and skips Auth/PostgREST unless a disposable local Supabase config is provided. To include the PostgreSQL checks locally, create a disposable PostgreSQL database named exactly `patentmapper_m1_test` on a local cluster:
 
 ```bash
 createdb patentmapper_m1_test
@@ -256,10 +268,12 @@ Use your local administrative PostgreSQL user/credentials in the DSN when needed
 
 ## Deferred milestones
 
-- Job/report reliability: durable execution/recovery, duplicate handling, transactional persistence, and final-report storage. Current background-task crash/partial-write/report limitations remain characterized by the original tests.
+- Job/report reliability: durable execution/recovery and whole-job duplicate execution handling. M2a now saves reports and finalizes rows atomically; process crash/restart recovery remains deferred.
 - Evidence workbench: sourced claim/citation evidence, provenance review, jurisdiction fidelity, and research workflows.
 - Quality evaluation: labeled retrieval/analysis benchmarks and hallucination/citation checks.
 
 _Built with ❤️ for startup CTOs and inventors who deserve better than $10K/year enterprise tools._
 
 Closure review, exact local Auth/PostgREST setup, browser checks, accounting policy, and publication evidence: [Milestone 1 review](docs/milestone-1-review.md).
+
+M2a behavior, exact disposable database/browser commands, test evidence, and remaining limits: [Milestone 2a review](docs/milestone-2a-review.md).

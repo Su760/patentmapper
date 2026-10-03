@@ -26,10 +26,14 @@ async def deduplicator_node(state: LandscapeState, supabase: AsyncClient) -> Dic
     seen: set = set()
     deduped = []
     for patent in raw:
-        pid = patent.get("patent_id", "")
-        if pid and pid not in seen:
+        pid = str(patent.get("patent_id") or "").strip()
+        usable_text = any(str(patent.get(key) or "").strip() for key in ("title", "abstract"))
+        if pid and usable_text and pid not in seen:
             seen.add(pid)
-            deduped.append(patent)
+            deduped.append({**patent, "patent_id": pid})
 
     logger.info("[deduplicator] %d → %d patents after dedup", len(raw), len(deduped))
+    if not deduped:
+        return {"deduped_patents": [], "retrieval_outcome": "insufficient_evidence",
+                "clusters": [], "white_space_analysis": "", "final_report": "", "citation_links": []}
     return {"deduped_patents": deduped}

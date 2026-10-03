@@ -8,19 +8,20 @@ Lens.org with SerpAPI fallback, and Supabase Postgres/Auth. Stripe provides chec
 and subscription webhooks. Auth uses magic links; Google OAuth is not implemented.
 
 The pipeline is expander → fetcher → deduplicator → clusterer → whitespace →
-reporter. Each node updates the search step; the graph timing wrapper is in
-`backend/app/agents/telemetry.py`. `backend/app/agents/state.py` is the state contract,
-including jurisdiction and AI-inferred citation links. Existing intelligence export
-code/schema is a read-only library, not a live API endpoint.
+reporter, with an early exit after deduplication when evidence is insufficient.
+Each node updates the saved search step. `backend/app/agents/state.py` is the state
+contract, including jurisdiction, retrieval outcome, coverage warnings and inferred links.
+Telemetry/export/provenance work in the original dirty main checkout is unpublished
+and is not part of this branch. Preserve it; do not copy it into this milestone.
 
-The results page includes clusters, gaps, AI provenance labels, an SVG relationship
+The results page includes clusters, gaps, a saved report, an SVG relationship
 graph, abstract-based claims inference, and ideation. Printing uses browser CSS;
 there is no server PDF renderer. No embeddings/vector database are introduced.
 
 Keep Python type hints and Pydantic request/response models, TypeScript strict
 mode without `any`, and properly awaited async calls. POST /jobs returns after
 database admission/insertion and schedules the graph in a BackgroundTask; do not
-await the graph in the request. The frontend polls every three seconds. Preserve
+await the graph in the request. The frontend polls sequentially with bounded read-only retries and cancellation. Preserve
 node step updates, existing finite provider retries, and deterministic graph mock
 mode; do not add retries/refunds around usage reservations.
 
@@ -84,10 +85,19 @@ Mock external model/patent services. CI runs real PostgreSQL ownership/concurren
 checks and frontend checks; plain unit runs explicitly skip SQL when no test DSN
 is configured. Keep all original characterization/export/telemetry tests.
 
-## Deferred work
+## M2a saved results and deferred work
 
-Do not implement job recovery, durable workers, transactional result persistence,
-report storage improvements, the evidence workbench, or quality evaluation in
-milestone 1. Existing background-task crash windows, duplicate-run/partial-write
-behavior, final-report loss, and abstract-based rather than sourced claim analysis
-remain known limitations. See the deferred milestones in `tasks/todo.md`.
+Apply migration `202610030001_saved_results.sql` after the three M1 migrations.
+Only `finalize_analysis` publishes successful completion: its service-only transaction
+locks the owned search and atomically saves results/patents/status. Replaying a
+successfully finalized search changes nothing; a failed write can be retried using
+the retained result payload. There are no automatic paid retries or blanket refunds.
+Keep `final_report` separate from gap text; legacy missing reports stay unavailable.
+Reopening claims is authenticated GET only, with explicit paid generation actions.
+All-provider failure is distinct from successful empty retrieval; insufficient usable
+evidence bypasses conclusion-generating nodes. Partial coverage warnings persist.
+
+Durable workers, restart recovery, whole-job duplicate execution handling, new
+providers, evidence workbench, and quality evaluation remain deferred. Existing
+claims/citation relationships are inferred, not verified source evidence. See
+`docs/milestone-2a-review.md` and `tasks/todo.md`.

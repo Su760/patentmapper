@@ -23,7 +23,7 @@ import httpx
 from fastapi import FastAPI
 from supabase import create_async_client
 
-from app.api.routes import router
+from app.api.routes import router, _run_graph as run_saved_graph
 from app.api.stripe_routes import router as billing_router
 from app.core.config import settings
 from app.db import get_supabase
@@ -72,6 +72,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         for job, user in ((self.job, self.users[0]), (self.guest_job, self.users[2])):
             self.sql(f"INSERT INTO public.searches(id,user_id,invention_idea,status) VALUES ('{job}','{user}','Synthetic irrigation controller with humidity sensors','completed'); INSERT INTO public.search_results(search_id,claims_analysis) VALUES ('{job}','[]'); INSERT INTO public.patents(search_id,patent_id,title,abstract) VALUES ('{job}','fixture','Fixture','Synthetic fixture');")
         db = await create_async_client(self.cfg["API_URL"], self.cfg["SERVICE_ROLE_KEY"])
+        self.db = db
         self.addAsyncCleanup(db.postgrest.aclose)
         self.addAsyncCleanup(db.auth.close)
         app = FastAPI()
@@ -133,7 +134,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(r.status_code,(401,403))
         for token in (self.tokens[0],self.tokens[1],self.tokens[2],self.cfg["ANON_KEY"]):
             headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)}
-            for fn,args in (("paid_usage_snapshot",{"p_user_id":self.users[0],"p_window_seconds":1}),("reserve_paid_operation",{"p_user_id":self.users[0],"p_operation":"claims","p_free_limit":999,"p_pro_limit":999,"p_global_limit":999,"p_window_seconds":1})):
+            for fn,args in (("finalize_analysis",{"p_search_id":self.job,"p_result":{},"p_patents":[]}),("paid_usage_snapshot",{"p_user_id":self.users[0],"p_window_seconds":1}),("reserve_paid_operation",{"p_user_id":self.users[0],"p_operation":"claims","p_free_limit":999,"p_pro_limit":999,"p_global_limit":999,"p_window_seconds":1})):
                 r=await self.http.post(f"/rest/v1/rpc/{fn}",headers=headers,json=args)
                 self.assertIn(r.status_code,(401,403))
             r=await self.http.patch(f"/rest/v1/subscriptions?user_id=eq.{self.users[0]}",headers=headers,json={"plan":"pro"})
@@ -170,3 +171,33 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
             self.no_work()
         finally:
             self.sql("ALTER TABLE public.usage_reservations_outage RENAME TO usage_reservations")
+
+    async def test_saved_report_through_sdk_and_browser_rls_cached_reopening_is_free(self):
+        from test_saved_results import state, REPORT
+        final = state(); final["search_id"] = self.job
+        final.update(retrieval_outcome="partial", coverage_warnings=["Partial coverage fixture"])
+        self.sql(f"UPDATE public.searches SET status='processing' WHERE id='{self.job}'")
+        with patch("app.api.routes.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
+            await run_saved_graph(self.job, "Synthetic invention", "all", self.db)
+        for token, visible in ((self.tokens[0],True),(self.tokens[1],False),(self.tokens[2],False),(self.cfg["ANON_KEY"],False)):
+            r = await self.http.get(f"/rest/v1/search_results?search_id=eq.{self.job}",headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)})
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(bool(r.json()),visible)
+            if visible:
+                self.assertEqual(r.json()[0]["final_report"],REPORT)
+                self.assertEqual(r.json()[0]["white_space_analysis"],"Separate gaps")
+                self.assertEqual(r.json()[0]["coverage_warnings"],["Partial coverage fixture"])
+        for _ in range(2):
+            status=await self.request("GET",f"/api/jobs/{self.job}",self.tokens[0])
+            self.assertEqual(status.json()["status"],"completed")
+            cached=await self.request("GET",f"/api/jobs/{self.job}/analyze-claims",self.tokens[0])
+            self.assertEqual(cached.json(),{"claims":[]})
+        self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),"0")
+        self.no_work()
+
+    async def test_insufficient_evidence_denies_generation_before_reservation(self):
+        self.sql(f"UPDATE public.searches SET status='insufficient_evidence' WHERE id='{self.job}'")
+        for path,body in ((f"/api/jobs/{self.job}/analyze-claims",None),(f"/api/jobs/{self.job}/ideate",{"white_space_title":"Gap","white_space_description":"Synthetic gap"})):
+            self.assertEqual((await self.request("POST",path,self.tokens[0],body)).status_code,409)
+        self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),"0")
+        self.no_work()

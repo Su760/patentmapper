@@ -12,7 +12,12 @@ import UsageSummary from "@/components/UsageSummary";
 
 interface DashboardItem {
   id: string;
-  status: "processing" | "completed" | "failed" | null;
+  status:
+    | "processing"
+    | "completed"
+    | "insufficient_evidence"
+    | "failed"
+    | null;
   current_step: string | null;
   error_message: string | null;
   inventionIdea: string | null;
@@ -40,6 +45,8 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 function StatusBadge({ status }: { status: DashboardItem["status"] }) {
+  if (status === "insufficient_evidence")
+    return <span className="pm-pill">Insufficient evidence</span>;
   if (status === "completed") {
     return (
       <span className="pm-badge green">

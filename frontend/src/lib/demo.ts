@@ -5,6 +5,10 @@ export const DEMO_META = {
   created_at: "2026-01-01T00:00:00Z",
 };
 export const DEMO_RESULTS = {
+  final_report:
+    "# Synthetic analysis brief\n\nThis fixed example illustrates a saved report. No patent search or AI generation was performed. Novelty and patentability have not been assessed.",
+  retrieval_outcome: "complete",
+  coverage_warnings: [],
   clusters: [
     {
       theme_name: "Sensor feedback (synthetic)",
