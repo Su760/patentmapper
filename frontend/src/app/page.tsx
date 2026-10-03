@@ -280,7 +280,7 @@ export default function Home() {
           </div>
 
           <div className="pm-foot-note">
-            No account needed · Results saved in your browser ·{" "}
+            Synthetic demo without an account · Sign in to save private analyses ·{" "}
             <Link
               href="/dashboard"
               style={{ color: "var(--text-3)", textDecoration: "none" }}
@@ -323,7 +323,7 @@ export default function Home() {
                 letterSpacing: "-0.02em",
               }}
             >
-              Monthly limit reached
+              Usage allowance reached
             </h2>
             <p
               style={{
@@ -333,8 +333,8 @@ export default function Home() {
                 lineHeight: 1.55,
               }}
             >
-              Your usage allowance has been reached. Pro includes a larger,
-              finite allowance; usage limits apply to every plan.
+              Your rolling usage allowance has been reached. Check Pricing for
+              your current limits and remaining usage. Every plan has a finite allowance.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <Link

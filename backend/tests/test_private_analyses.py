@@ -305,6 +305,8 @@ const api=load('src/lib/api.ts',{'@/lib/supabase':supabase,'@/lib/demo':demo});
   await assert.rejects(()=>api.analyzeClaimsRequest('owned'),/no paid work/);
   const oldCount=calls.length;authError=new Error('session failed');
   await assert.rejects(()=>api.getJobStatus('owned'),/Sign in/);assert.equal(calls.length,oldCount);
+  response={ok:false,status:403,json:async()=>({detail:'Sign in or create a permanent account before upgrading.'})};
+  await assert.rejects(()=>api.createCheckoutSession('verified-anonymous-token'),/permanent account/);
   console.log('Browser API contract: credentials, denial, quota errors, deterministic demo and zero demo network calls verified.');
 })().catch(e=>{console.error(e);process.exitCode=1});
 '''], cwd=frontend, capture_output=True, text=True, timeout=30)

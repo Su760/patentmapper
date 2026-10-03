@@ -71,9 +71,7 @@ export async function createCheckoutSession(
       Authorization: `Bearer ${jwt}`,
     },
   });
-  if (!res.ok) {
-    throw new Error(`Checkout session failed: ${res.status} ${res.statusText}`);
-  }
+  await requireOK(res);
   return res.json() as Promise<{ checkout_url: string }>;
 }
 

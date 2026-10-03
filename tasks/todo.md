@@ -1,5 +1,29 @@
 # Patent Landscape Mapper — Task Tracker
 
+## Targeted M1 follow-up and M2a: reliable saved results (2026-10-03)
+
+**Approval:** User explicitly approved this plan and implementation/commit/push, without another approval pause. Start in the clean `milestone-1-private-bounded` worktree at published `6863af2`; leave the original dirty main and unpublished tests/work byte-for-byte untouched. Push the focused M1 fix first, verify checks, then create an M2a branch from that updated tip. No merge, deployment commands, production migrations, Vercel settings, or global-hook changes.
+
+**A file boundary:** `backend/app/api/stripe_routes.py`, `backend/tests/test_checkout.py` (new), `frontend/src/lib/api.ts`, `frontend/src/app/page.tsx`, relevant browser/API tests, `tasks/todo.md`, `tasks/lessons.md`.
+**A diagnosis:** `stripe_routes.py:40-51` verifies identity but never excludes anonymous users before Stripe. `page.tsx:283` and the limit modal retain obsolete guest/monthly promises; checkout API errors are replaced with a generic status string.
+
+- [x] Add failing mocked-Stripe regression; reject anonymous checkout with permanent-account guidance, retain registered checkout, correct homepage copy and propagated checkout errors.
+- [ ] Run M1 regressions/frontend checks; inspect relevant staged diff and secrets; commit/push M1 and inspect hosted checks.
+- [ ] Create M2a branch from updated M1 tip.
+
+**M1 follow-up local verification:** 22 mocked backend/API tests passed; two database classes skipped locally for this focused run and assigned to hosted PostgreSQL/Auth jobs. Frontend lint/typecheck/build and three Chromium checks passed. Anonymous regression changed from `200 != 403` to passing; registered checkout returns its mocked URL with one Stripe call, anonymous/missing credentials make zero Stripe calls.
+
+**B file boundary:** `backend/app/api/routes.py`, `backend/app/agents/graph.py`, `backend/app/agents/state.py`, relevant nodes (`fetcher.py`, `deduplicator.py`, `reporter.py`), `backend/app/services/patent_api.py`, new finalization service if needed, `backend/app/core/config.py` / `.env.example` only for required configured bounds; new forward migration under `supabase/migrations/`, backend regression/SQL/Auth tests under `backend/tests/`, `frontend/src/lib/api.ts`, `frontend/src/lib/demo.ts`, `frontend/src/app/results/[id]/ResultsClient.tsx`, `frontend/src/app/dashboard/page.tsx`, focused polling helper/config under `frontend/src/lib/`, browser tests under `frontend/tests/`, `.github/workflows/checks.yml`, `README.md`, `CLAUDE.md`, `tasks/todo.md`, `docs/milestone-2a-review.md`.
+**Design:** Save final report separately from gap analysis. Load cached claims via authenticated GET, with explicitly charged generation/regeneration. Show persisted stages using one sequential, cancellable, bounded polling loop with visible failures/retry. Preserve provider semaphore and finite retries while distinguishing failure, successful empty, and partial retrieval. Skip conclusion-generating nodes when no usable patents remain. A service-only database finalization RPC locks the search and atomically writes report/results/patents plus terminal status; repeat finalization of a terminal search is a no-op, preserving cached claims and avoiding duplicates. Legacy reports remain unavailable, never regenerated on read.
+
+- [ ] Confirm full pipeline/persistence/browser call paths; write failing regressions for report round trip, retrieval outcomes, cached reopening, polling errors/cleanup, atomic rollback/retry.
+- [ ] Implement retrieval outcome propagation, guarded downstream analysis, atomic finalization migration/service, and saved-report behavior.
+- [ ] Implement cached claims, explicit usage actions, honest legacy report state, persisted-stage polling and coverage warnings with account isolation.
+- [ ] Run M1/new mocked tests, disposable SQL/Auth/PostgREST tests, frontend checks/build and browser regressions; obtain independent read-only persistence/failure review and fix confirmed defects.
+- [ ] Complete M2a review with exact test results/migrations/limits; inspect/stage relevant changes, commit/push M2a, inspect hosted CI.
+
+**Deferred:** durable queues, restart recovery, automatic paid retries, new patent providers, evidence workbench and quality evaluation. Vercel preview diagnosis remains separate. Existing M1 atomic admission and conservative failed-attempt accounting remain unchanged.
+
 ## Milestone 1 closure review and review branch (2026-10-02)
 
 **Approval:** The user explicitly approved this bounded review/fix/handoff, including a feature-branch commit/push and hosted CI inspection. This supersedes the earlier no-commit/no-push instruction for relevant milestone-1 work only. No merge, deployment, production migration, hook changes, or milestone 2.

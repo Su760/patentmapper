@@ -38,6 +38,8 @@ async def create_checkout_session(
 ) -> Dict[str, Any]:
     """Create a Stripe Checkout Session for the Pro plan and return its URL."""
     user = await _get_user(authorization, supabase)
+    if user.is_anonymous:
+        raise HTTPException(403, "Sign in or create a permanent account before upgrading. Anonymous sessions cannot purchase a plan.")
     stripe.api_key = settings.stripe_secret_key
 
     session = await asyncio.to_thread(
