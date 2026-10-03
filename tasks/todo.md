@@ -20,7 +20,7 @@
 - [x] Implement retrieval outcome propagation, guarded downstream analysis, atomic finalization migration/service, and saved-report behavior.
 - [x] Implement cached claims, explicit usage actions, honest legacy report state, persisted-stage polling and coverage warnings with account isolation.
 - [x] Run M1/new mocked tests, disposable SQL/Auth/PostgREST tests, frontend checks/build and browser regressions; obtain independent read-only persistence/failure review and fix confirmed defects.
-- [ ] Complete M2a review with exact test results/migrations/limits; inspect/stage relevant changes, commit/push M2a, inspect hosted CI.
+- [x] Complete M2a review with exact test results/migrations/limits; inspect/stage relevant changes, commit/push M2a, inspect hosted CI. Application `5a4ffd0` is pushed; Checks run `37109210348` passed both jobs (45 mocked/PostgreSQL tests plus seven actual Auth/PostgREST; 19 frontend checks and lint/typecheck/build). `docs/milestone-2a-review.md` contains the full handoff.
 
 **Verification:** 52 backend tests passed without skips (30 mocked, 15 actual PostgreSQL, seven actual local Supabase Auth/PostgREST). Frontend lint/typecheck/build and 19 Playwright-run checks passed (13 Chromium, six deterministic Node). Independent backend/frontend reviews closed all confirmed findings; migration 4 was applied only to disposable databases. Original main preservation hashes matched every code/test file; one original review document gained two blank lines immediately after the baseline snapshot (source unconfirmed), left untouched and excluded. Details in `docs/milestone-2a-review.md`.
 

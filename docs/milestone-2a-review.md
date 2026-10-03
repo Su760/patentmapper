@@ -6,7 +6,7 @@ The user approved this follow-up, implementation, isolated branches, commits and
 
 M1 follow-up: [9431701](https://github.com/Su760/patentmapper/commit/943170138e558e77c2afc757b6cac8a495136bf0) on [milestone-1-private-bounded](https://github.com/Su760/patentmapper/tree/milestone-1-private-bounded). Its [Checks run 37106987775](https://github.com/Su760/patentmapper/actions/runs/37106987775) passed both jobs before M2a branched from that tip.
 
-M2a: [milestone-2a-reliable-saved-results](https://github.com/Su760/patentmapper/tree/milestone-2a-reliable-saved-results). Hosted M2a Checks will be inspected after publication; local evidence is recorded separately below.
+M2a: [milestone-2a-reliable-saved-results](https://github.com/Su760/patentmapper/tree/milestone-2a-reliable-saved-results). Application commit [5a4ffd0](https://github.com/Su760/patentmapper/commit/5a4ffd03b8a9386b8749e1bca3f8c8c05ed53844) passed [hosted Checks run 37109210348](https://github.com/Su760/patentmapper/actions/runs/37109210348), both jobs successful. Hosted evidence: 45 mocked/PostgreSQL tests (the separately scheduled Auth class is skipped in that job), seven real Auth/PostgREST tests, 19 frontend checks, lint/typecheck/build. A documentation-only handoff commit records this result; local evidence is separate below.
 
 ## Findings and implemented fixes
 
