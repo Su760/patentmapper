@@ -5,24 +5,21 @@ GET  /jobs/{job_id} — poll job status
 """
 import json
 import logging
-import uuid
 from typing import Annotated, Any, Dict, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from groq import AsyncGroq
 from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError
 from supabase import AsyncClient
 
-from app.agents.graph import build_graph
-from app.agents.state import LandscapeState
-from app.agents.nodes.fetcher import RetrievalFailure
 from app.core.config import settings
 from app.core.security import owned_job, require_bearer, require_user
 from app.db import get_supabase
 from app.services.llm import create_chat_completion
 from app.services.usage import reserve_usage
+from app.services.jobs import admit_job, rpc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_bearer), Depends(require_user)])
@@ -37,12 +34,13 @@ class JobRequest(BaseModel):
         strip_whitespace=True, min_length=settings.invention_min_chars,
         max_length=settings.invention_max_chars,
     )]
+    submission_key: UUID
     jurisdiction: Literal["all", "us", "ep", "wo"] = "all"
 
 
 class JobCreatedResponse(BaseModel):
     job_id: str
-    status: str = "processing"
+    status: str = "queued"
 
 
 class JobStatusResponse(BaseModel):
@@ -83,95 +81,18 @@ def body_schema(model: type[BaseModel]) -> dict:
     }}}
 
 
-# ── Background task ────────────────────────────────────────────────────────────
-
-
-async def _run_graph(search_id: str, invention_idea: str, jurisdiction: str, supabase: AsyncClient) -> None:
-    """Run the full LangGraph pipeline in the background."""
-    initial_state: LandscapeState = {
-        "search_id": search_id,
-        "invention_idea": invention_idea,
-        "jurisdiction": jurisdiction,
-        "search_queries": [],
-        "raw_patents": [],
-        "deduped_patents": [],
-        "clusters": [],
-        "white_space_analysis": "",
-        "final_report": "",
-        "errors": [],
-        "citation_links": [],
-        "retrieval_outcome": "complete",
-        "coverage_warnings": [],
-    }
-
-    try:
-        graph = build_graph(supabase)
-        final_state: LandscapeState = await graph.ainvoke(initial_state)
-
-        # Only the database transaction may publish a terminal successful status.
-        await supabase.table("searches").update({"current_step": "finalizing"}).eq(
-            "id", search_id
-        ).eq("status", "processing").execute()
-        result = await supabase.rpc("finalize_analysis", {
-            "p_search_id": search_id,
-            "p_result": {key: final_state.get(key) for key in (
-                "clusters", "white_space_analysis", "final_report", "citation_links",
-                "retrieval_outcome", "coverage_warnings",
-            )},
-            "p_patents": final_state["deduped_patents"],
-        }).execute()
-        if result.data not in ("saved", "already_finalized"):
-            raise RuntimeError("Database finalization did not confirm success")
-
-        logger.info("[routes] job %s completed", search_id)
-
-    except Exception as exc:
-        logger.exception("[routes] job %s failed: %s", search_id, exc)
-        error_str = str(exc).lower()
-        if isinstance(exc, RetrievalFailure):
-            friendly = str(exc)
-        elif "429" in error_str or "rate limit" in error_str:
-            friendly = "Patent database temporarily unavailable. Please try again in a few minutes."
-        elif any(kw in error_str for kw in ("groq", "llm", "json")):
-            friendly = "AI analysis failed. Please try again — this sometimes happens with unusual invention descriptions."
-        elif any(kw in error_str for kw in ("supabase", "database")):
-            friendly = "Database error. Please try again."
-        else:
-            friendly = "Analysis failed. Please try again."
-        await supabase.table("searches").update(
-            {"status": "failed", "error_message": friendly}
-        ).eq("id", search_id).eq("status", "processing").execute()
-
-
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
 @router.post("/jobs", response_model=JobCreatedResponse, status_code=202, openapi_extra=body_schema(JobRequest))
 async def create_job(
     body: Annotated[JobRequest, Depends(authenticated_body(JobRequest))],
-    background_tasks: BackgroundTasks,
     user: Any = Depends(require_user),
     supabase: AsyncClient = Depends(get_supabase),
 ) -> JobCreatedResponse:
     """Create a new patent landscape search job. Returns immediately with a job_id."""
-    user_id = str(user.id)
-    search_id = str(uuid.uuid4())
-    await reserve_usage(supabase, user_id, "job", search_id)
-
-    await supabase.table("searches").insert(
-        {
-            "id": search_id,
-            "invention_idea": body.invention_idea,
-            "user_id": user_id,
-            "status": "processing",
-            "current_step": "queued",
-        }
-    ).execute()
-
-    background_tasks.add_task(_run_graph, search_id, body.invention_idea, body.jurisdiction, supabase)
-
-    logger.info("[routes] created job %s", search_id)
-    return JobCreatedResponse(job_id=search_id)
+    data = await admit_job(supabase, str(user.id), body.submission_key, body.invention_idea, body.jurisdiction)
+    return JobCreatedResponse(job_id=data['job_id'], status=data['status'])
 
 
 @router.post("/jobs/{search_id}/ideate", openapi_extra=body_schema(IdeateRequest))
@@ -300,9 +221,16 @@ async def analyze_claims(
 async def get_job(
     search_id: UUID,
     job: Dict[str, Any] = Depends(owned_job),
+    supabase: AsyncClient = Depends(get_supabase),
 ) -> JobStatusResponse:
-    """Poll the status of a patent landscape search job."""
+    """Free owned status read; expire running work even when workers are offline."""
     row = job
+    if row["status"] == "running":
+        try:
+            row = await rpc(supabase, "read_analysis_status", {"p_search_id": str(search_id), "p_user_id": str(job["user_id"])})
+            if not row: raise ValueError("Missing status")
+        except Exception:
+            raise HTTPException(503, "Job status could not be confirmed. Retry status; this starts no paid work.") from None
     return JobStatusResponse(
         job_id=str(search_id),
         status=row["status"],

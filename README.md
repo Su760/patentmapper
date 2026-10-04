@@ -46,11 +46,11 @@ PatentMapper is a multi-agent AI pipeline that turns a plain-English invention d
 User Input (plain-English invention description)
         │
         ▼
-  FastAPI POST /jobs  ──►  Supabase  (searches row, status: processing)
+  FastAPI POST /jobs  ──►  Supabase  (quota + owned job + durable queued inputs)
         │
         │  returns job_id immediately — never awaits the pipeline
         ▼
-  BackgroundTask
+  Separate worker (atomic claim, lease, heartbeat, fencing)
   ┌─────────────────────────────────────────────────────────────────┐
   │                      LangGraph DAG                              │
   │                                                                 │
@@ -80,7 +80,7 @@ User Input (plain-English invention description)
   └─────────────────────────────────────────────────────────────────┘
         │
         ▼
-  finalize_analysis transaction ──► searches (completed / insufficient_evidence)
+  durable output checkpoint → fenced publish_analysis transaction ──► searches (completed / insufficient_evidence)
                  search_results   (clusters, white_space_analysis,
                                    final_report, citation_links, coverage warnings)
                  patents          (individual rows per deduped patent)
@@ -122,7 +122,7 @@ User Input (plain-English invention description)
 
 ### Prerequisites
 
-- Python 3.13+
+- Python 3.11–3.13 (pinned dependencies do not currently support Python 3.14)
 - Node.js 18+
 - A [Supabase](https://supabase.com) project (free tier works)
 - At least one LLM key: [Groq](https://console.groq.com) (free tier, fast)
@@ -147,7 +147,7 @@ cp ../.env.example ../.env
 # Edit .env — at minimum set GROQ_API_KEY + the three SUPABASE vars
 ```
 
-Apply the checked-in migrations to a **development/test Supabase project** before starting the updated API. Review existing policies first: migration 1 replaces policies on searches, results, patents, and subscriptions with owner-only reads and server-only writes.
+Stop old API/background processes before applying migration 5. Apply the checked-in migrations to a **development/test Supabase project** before starting the updated API and separate worker. Review existing policies first: migration 1 replaces policies on searches, results, patents, and subscriptions with owner-only reads and server-only writes.
 
 ```bash
 # Run from the repository root, with a development database URL set externally.
@@ -155,10 +155,11 @@ psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020002_bounded_usage.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020003_usage_snapshot.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610030001_saved_results.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610040001_durable_jobs.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema'"
 ```
 
-Alternatively, execute those four files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
+Alternatively, execute those five files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
 
 ### 3. Frontend setup
 
@@ -182,7 +183,10 @@ cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 
 # Terminal 2 — frontend
 cd frontend && npm run dev
 
-# Terminal 3 — Stripe webhooks (only needed for billing)
+# Terminal 3 — durable worker (required for private analyses)
+cd backend && source .venv/bin/activate && python -m app.worker
+
+# Terminal 4 — Stripe webhooks (only needed for billing)
 stripe listen --forward-to localhost:8000/api/stripe/webhook
 ```
 
@@ -241,7 +245,25 @@ The browser displays persisted stages, uses one sequential status request at a t
 
 If all provider attempts fail, the search fails explicitly. Successful retrieval with no usable patents (nonempty ID plus title or abstract) finishes as `insufficient_evidence` without clustering/gap/report/claims generation. Partial retrieval retains available evidence with saved coverage warnings. The original semaphore of five and finite provider retries remain.
 
-The service-only `finalize_analysis` RPC locks the search and atomically saves result/patent rows and completion. Successful terminal retries are no-ops; failed writes roll back. Retrying a retained finalization payload is permitted after failure, but no automatic paid retry or restart recovery exists. The transaction ignores provider-supplied row/search IDs and preserves cached claims. Existing browser RLS applies to new report fields.
+The service-only `publish_analysis` RPC atomically saves result/patent rows and completion using a fenced durable output checkpoint. The legacy `finalize_analysis` RPC is internal-only; service callers cannot execute it. Successful publication retries are no-ops and preserve cached claims. Browser RLS covers saved reports.
+
+## Durable jobs (M2b1)
+
+POST `/api/jobs` requires a UUID `submission_key`, invention text and jurisdiction. Server-verified owner + key + identical normalized payload returns the original job, including after a lost response, without another reservation. Changed payload with the same key returns 409. The browser saves unconfirmed keys per account in session storage, restores inputs after reload and reuses the key when you retry. It never automatically resubmits a paid request. Changing inputs creates a separate paid analysis; clearing browser storage or changing tabs can lose retry identity, so check the dashboard before starting over.
+
+Admission reserves quota, creates the owned search and queues its inputs in one transaction. Quota or insert failures roll everything back; a response timeout can still mean admission committed, so retry with the same key. The API never runs the graph. Start a **separate long-running worker** with the same server configuration (from `backend/`):
+
+```bash
+python -m app.worker
+# Separate terminal/process:
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Queued work survives API/worker restarts. A worker claims with an expiring token and checks ownership before stages/provider calls. Expired running jobs become `interrupted`, including on free owner status reads when workers are offline. They are never automatically rerun. Paid attempts retain their reservation; a fresh analysis consumes new usage. A crash after the last provider response but before its durable checkpoint is still interrupted.
+
+Valid complete output is checkpointed before publication. `finalizing` jobs can recover from that snapshot without provider calls. Publication attempts are bounded by worker concurrency and lease cadence; fair claim ordering prevents a persistently failing publication from monopolizing the queue. Persistent database/schema errors require operator attention; there is no automatic paid replay or exactly-once external-call guarantee. In-flight provider requests may already have been charged when a worker loses its lease.
+
+`WORKER_CONCURRENCY` bounds each process; all workers must share `WORKER_MAX_ACTIVE` for the global database claim cap. Configure timings in `.env.example`. Lease tokens fence stage/status/output writes; old RPC/direct service mutation bypasses are denied. Legacy owned `processing` jobs become interrupted during migration; ownerless legacy records remain untouched and hidden. Downgrading to the old background-task API is incompatible with these fences; roll forward without deleting queued inputs or saved output. See [M2b1 review](docs/milestone-2b1-review.md) for exact verification and migration/rollback details.
 
 ## Checks and local database regressions
 
@@ -268,7 +290,7 @@ Use your local administrative PostgreSQL user/credentials in the DSN when needed
 
 ## Deferred milestones
 
-- Job/report reliability: durable execution/recovery and whole-job duplicate execution handling. M2a now saves reports and finalizes rows atomically; process crash/restart recovery remains deferred.
+- Further execution reliability: full stage replay, automatic paid retries/refunds and any broader recovery design. M2b1 admits durable jobs and recovers publication only; interrupted paid graphs remain interrupted.
 - Evidence workbench: sourced claim/citation evidence, provenance review, jurisdiction fidelity, and research workflows.
 - Quality evaluation: labeled retrieval/analysis benchmarks and hallucination/citation checks.
 

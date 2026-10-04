@@ -3,7 +3,7 @@
 ## Current implementation
 
 Keep the existing stack: Next.js 14 App Router / TypeScript / Tailwind, FastAPI
-async background tasks, a six-node LangGraph DAG, configurable Groq completions,
+plus a separate durable-job worker, a six-node LangGraph DAG, configurable Groq completions,
 Lens.org with SerpAPI fallback, and Supabase Postgres/Auth. Stripe provides checkout
 and subscription webhooks. Auth uses magic links; Google OAuth is not implemented.
 
@@ -20,8 +20,8 @@ there is no server PDF renderer. No embeddings/vector database are introduced.
 
 Keep Python type hints and Pydantic request/response models, TypeScript strict
 mode without `any`, and properly awaited async calls. POST /jobs returns after
-database admission/insertion and schedules the graph in a BackgroundTask; do not
-await the graph in the request. The frontend polls sequentially with bounded read-only retries and cancellation. Preserve
+transactional quota/search/queue admission; it never executes the graph. Run
+`python -m app.worker` separately. The frontend polls sequentially with bounded read-only retries and cancellation. Preserve
 node step updates, existing finite provider retries, and deterministic graph mock
 mode; do not add retries/refunds around usage reservations.
 
@@ -88,16 +88,25 @@ is configured. Keep all original characterization/export/telemetry tests.
 ## M2a saved results and deferred work
 
 Apply migration `202610030001_saved_results.sql` after the three M1 migrations.
-Only `finalize_analysis` publishes successful completion: its service-only transaction
-locks the owned search and atomically saves results/patents/status. Replaying a
-successfully finalized search changes nothing; a failed write can be retried using
-the retained result payload. There are no automatic paid retries or blanket refunds.
+After migration 5, only fenced `publish_analysis` publishes successful completion
+using the queue checkpoint; `finalize_analysis` is internal-only. Terminal retries
+are no-ops. A failed publication retains saved output for provider-free recovery. There are no automatic paid retries or blanket refunds.
 Keep `final_report` separate from gap text; legacy missing reports stay unavailable.
 Reopening claims is authenticated GET only, with explicit paid generation actions.
 All-provider failure is distinct from successful empty retrieval; insufficient usable
 evidence bypasses conclusion-generating nodes. Partial coverage warnings persist.
 
-Durable workers, restart recovery, whole-job duplicate execution handling, new
-providers, evidence workbench, and quality evaluation remain deferred. Existing
+M2b1 adds owner-scoped submission keys, atomic quota/search/queue admission,
+leased worker claims, heartbeats and fenced stage/checkpoint/publication writes.
+Apply `202610040001_durable_jobs.sql` after M2a; stop old API/background processes first.
+Queued inputs snapshot pipeline version/model/mock/fallback settings; credentials
+remain runtime-only. Never change version-1 execution semantics incompatibly without
+a migration/version strategy. Expired running jobs become interrupted and retain usage;
+never replay the paid graph automatically. Only checkpointed final output can recover
+publication without providers. Service direct mutation bypasses are denied, except
+authorized cached claims updates. See `docs/milestone-2b1-review.md`.
+
+Full stage replay, automatic paid retries/refunds, new providers, evidence workbench,
+and quality evaluation remain deferred. Existing
 claims/citation relationships are inferred, not verified source evidence. See
 `docs/milestone-2a-review.md` and `tasks/todo.md`.

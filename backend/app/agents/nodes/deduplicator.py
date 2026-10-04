@@ -9,6 +9,7 @@ from typing import Any, Dict
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,7 @@ async def deduplicator_node(state: LandscapeState, supabase: AsyncClient) -> Dic
     raw = state["raw_patents"]
     logger.info("[deduplicator] starting for search_id=%s, %d raw patents", search_id, len(raw))
 
-    await supabase.table("searches").update({"current_step": "deduplicating"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "deduplicating")
 
     seen: set = set()
     deduped = []

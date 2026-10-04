@@ -76,7 +76,8 @@ export interface JobCreatedResponse {
 
 export interface JobStatusResponse {
   job_id: string;
-  status: "processing" | "completed" | "insufficient_evidence" | "failed";
+  status: "queued" | "running" | "finalizing" | "interrupted"
+    | "processing" | "completed" | "insufficient_evidence" | "failed";
   current_step: string | null;
   error_message: string | null;
 }
@@ -84,13 +85,18 @@ export interface JobStatusResponse {
 export async function createJob(
   inventionIdea: string,
   jurisdiction: string,
+  submissionKey: string,
   jwt?: string,
+  signal?: AbortSignal,
 ): Promise<JobCreatedResponse> {
-  const headers = await authHeaders(jwt);
+  const headers = await authHeaders(jwt, signal);
   const res = await fetch(`${API_BASE}/jobs`, {
+    signal,
     method: "POST",
     headers,
-    body: JSON.stringify({ invention_idea: inventionIdea, jurisdiction }),
+    body: JSON.stringify({
+      invention_idea: inventionIdea, jurisdiction, submission_key: submissionKey,
+    }),
   });
 
   await requireOK(res);

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List
 
 import httpx
+from app.services.execution import before_paid_call
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 PATENTSVIEW_URL = "https://api.patentsview.org/patents/query"
@@ -93,6 +94,7 @@ async def fetch_serpapi_patents(
     country = _COUNTRY_MAP.get(jurisdiction)
     if country:
         params["country"] = country
+    await before_paid_call()
     resp = await client.get(
         SERPAPI_URL,
         params=params,
@@ -164,6 +166,7 @@ async def fetch_lens_patents(
         "size": 10,
         "include": ["lens_id", "abstract", "date_published", "biblio"],
     }
+    await before_paid_call()
     resp = await client.post(LENS_URL, json=payload, headers=headers, timeout=30.0)
     resp.raise_for_status()
 

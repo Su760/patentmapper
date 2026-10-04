@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   getJobStatus,
@@ -24,6 +26,7 @@ type Phase =
   | "polling"
   | "loading_results"
   | "completed"
+  | "interrupted"
   | "failed"
   | "unavailable";
 
@@ -973,6 +976,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   accessScope.current = `${jobId}:${userId ?? "signed-out"}`;
   const [renderScope, setRenderScope] = useState("");
   const [phase, setPhase] = useState<Phase>("init");
+  const [jobStatus, setJobStatus] = useState("");
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [pollNotice, setPollNotice] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
@@ -1152,14 +1156,15 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         onStatus: async (status, signal) => {
           if (!current() || signal.aborted) return;
           setPollNotice(null);
+          setJobStatus(status.status);
           setCurrentStep(status.current_step);
-          if (status.status === "processing") {
+          if (["queued", "running", "finalizing", "processing"].includes(status.status)) {
             setPhase("polling");
             return;
           }
-          if (status.status === "failed") {
+          if (status.status === "failed" || status.status === "interrupted") {
             setErrorMessage(status.error_message ?? "Analysis failed.");
-            setPhase("failed");
+            setPhase(status.status);
             return;
           }
           setPhase("loading_results");
@@ -1294,10 +1299,16 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Analyzing your invention...
+            {jobStatus === "queued" ? "Analysis queued"
+              : jobStatus === "finalizing" ? "Saving completed analysis"
+              : "Analyzing your invention..."}
           </h1>
           <p style={{ color: "var(--text-3)", fontSize: 14 }}>
-            Progress reflects stages saved by the server.
+            {jobStatus === "queued"
+              ? "Your inputs are saved. A worker will begin when capacity is available; you can leave this page."
+              : jobStatus === "finalizing"
+                ? "Output is saved. Publication can recover without repeating paid provider calls."
+                : "Progress reflects stages saved by the server."}
           </p>
         </div>
         <Stepper stepIdx={displayStepIdx} />
@@ -1356,7 +1367,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }
 
   // ── Error UI ──
-  if (phase === "failed" || phase === "unavailable") {
+  if (phase === "failed" || phase === "interrupted" || phase === "unavailable") {
     return (
       <main
         style={{
@@ -1389,7 +1400,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            {phase === "failed" ? "Analysis failed" : "Analysis unavailable"}
+            {phase === "interrupted" ? "Analysis interrupted" : phase === "failed" ? "Analysis failed" : "Analysis unavailable"}
           </h2>
           <p style={{ color: "var(--text-2)", fontSize: 14, marginBottom: 24 }}>
             {errorMessage ?? "An unknown error occurred."}
@@ -1401,6 +1412,12 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             Retry status
           </button>
           <p>Checks saved status only; no paid work is started.</p>
+          {phase === "interrupted" && <p>
+            Provider calls may have occurred and the reservation is retained.
+            This execution will not restart automatically.{" "}
+            <Link href="/">Start a fresh analysis</Link> to continue; it consumes
+            a new analysis allowance.
+          </p>}
           <a href="/auth">Sign in</a> · <a href="/">New analysis</a>
         </div>
       </main>

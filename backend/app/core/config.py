@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_pro_price_id: str = ""
     stripe_webhook_secret: str = ""
+
+    worker_concurrency: int = Field(default=2, ge=1, le=32)
+    worker_max_active: int = Field(default=2, ge=1, le=32)
+    worker_lease_seconds: int = Field(default=60, ge=3)
+    worker_heartbeat_seconds: float = Field(default=10, gt=0)
+    worker_rpc_timeout_seconds: float = Field(default=5, gt=0)
+    worker_poll_seconds: float = Field(default=2, gt=0)
+    worker_execution_timeout_seconds: float = Field(default=600, gt=0)
+
+    @model_validator(mode="after")
+    def validate_worker_timing(self):
+        if self.worker_heartbeat_seconds + self.worker_rpc_timeout_seconds >= self.worker_lease_seconds:
+            raise ValueError("Worker heartbeat plus RPC timeout must fit within lease")
+        return self
 
     # Every provider-backed operation consumes a non-refundable reservation.
     free_job_limit: int = Field(default=3, ge=0)

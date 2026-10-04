@@ -14,6 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
 
@@ -49,13 +50,11 @@ async def expander_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     search_id = state["search_id"]
     logger.info("[expander] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "generating_queries"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "generating_queries")
 
     suffix = _JURISDICTION_SUFFIX.get(state.get("jurisdiction", "all"), "")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         queries = [q for i, q in enumerate(MOCK_QUERIES) if i < 7]
         if suffix:
             queries = [f"{q} {suffix}" for q in queries]

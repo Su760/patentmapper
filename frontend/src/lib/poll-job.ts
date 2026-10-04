@@ -31,7 +31,7 @@ export function startJobPolling(
         const status = await callbacks.read(controller.signal);
         if (stopped || controller.signal.aborted) return true;
         await callbacks.onStatus(status, controller.signal);
-        return status.status !== "processing";
+        return !["queued", "running", "finalizing", "processing"].includes(status.status);
       })();
       // Also bound SDK/token waits that do not themselves honor AbortSignal.
       terminal = await new Promise<boolean>((resolve, reject) => {

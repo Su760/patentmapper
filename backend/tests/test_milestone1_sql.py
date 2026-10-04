@@ -5,6 +5,7 @@ MILESTONE1_TEST_DSN='postgresql://.../patentmapper_m1_test' python -m unittest d
 The fixture resets public/auth schemas in that disposable database.
 """
 import asyncio
+import uuid
 import json
 import os
 from pathlib import Path
@@ -110,11 +111,12 @@ class SQLDatabase:
         return SQLQuery(self, name)
 
     def rpc(self, name, params):
-        assert name == "reserve_paid_operation"
+        assert name in ("reserve_paid_operation", "admit_analysis", "claim_analysis", "read_analysis_status", "heartbeat_analysis", "stage_analysis", "checkpoint_analysis", "fail_analysis", "publish_analysis")
         async def execute():
-            args = ",".join(f"{k} => {literal(v)}" for k, v in params.items())
-            result = await asyncio.to_thread(self.sql.run, f"SET ROLE service_role; SELECT public.reserve_paid_operation({args})")
-            return SimpleNamespace(data=result)
+            args = ",".join(f"{k} => {literal(json.dumps(v) if isinstance(v, (dict,list)) else v)}" for k, v in params.items())
+            result = await asyncio.to_thread(self.sql.run, f"SET ROLE service_role; SELECT public.{name}({args})")
+            data = result if name == "reserve_paid_operation" else (result == "t") if result in ("t","f") else json.loads(result) if result else None
+            return SimpleNamespace(data=data)
         return SimpleNamespace(execute=execute)
 
 
@@ -153,17 +155,45 @@ class Milestone1SQLTest(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_supabase] = lambda: db
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture")
         self.addAsyncCleanup(self.client.aclose)
-        self.graph = self.enterContext(patch("app.api.routes._run_graph", new=AsyncMock()))
+        self.graph = self.enterContext(patch("app.worker.run_claim", new=AsyncMock()))
         self.model = self.enterContext(patch("app.api.routes.create_chat_completion", new=AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims":[],"invention_name":"Fixture"}'))]))))
         self.groq = self.enterContext(patch("app.api.routes.AsyncGroq"))
         self.lens = self.enterContext(patch("app.agents.nodes.fetcher.fetch_lens_patents", new=AsyncMock()))
         self.serp = self.enterContext(patch("app.agents.nodes.fetcher.fetch_serpapi_patents", new=AsyncMock()))
 
     async def request(self, method, path, token="owner", body=None):
+        if path == "/api/jobs" and isinstance(body, dict):
+            body = {"submission_key": str(uuid.uuid4()), **body}
         return await self.client.request(method, path, headers={"Authorization": f"Bearer {token}"}, json=body)
 
     def browser_sql(self, role, user_id, query):
         return self.sql.run(f"SET ROLE {role}; SET request.jwt.claim.sub = {literal(user_id)}; {query}")
+
+    async def test_committed_admission_response_loss_http_retry_is_idempotent(self):
+        db=self.client._transport.app.dependency_overrides[get_supabase]()
+        original=db.rpc
+        lost=True
+        def rpc(name,params):
+            real=original(name,params)
+            async def execute():
+                nonlocal lost
+                result=await real.execute()
+                if name=='admit_analysis' and lost:
+                    lost=False
+                    raise RuntimeError('committed admission response lost')
+                return result
+            return SimpleNamespace(execute=execute)
+        db.rpc=rpc
+        self.client._transport.app.dependency_overrides[get_supabase]=lambda:db
+        body={"invention_idea":IDEA,"submission_key":str(uuid.uuid4())}
+        first=await self.request('POST','/api/jobs',body=body)
+        self.assertEqual(first.status_code,503)
+        self.assertIn('same inputs and submission key',first.text)
+        second=await self.request('POST','/api/jobs',body=body)
+        self.assertEqual(second.status_code,202)
+        self.assertEqual(self.sql.run('SELECT count(*) FROM public.analysis_queue'),'1')
+        self.assertEqual(self.sql.run('SELECT count(*) FROM public.usage_reservations'),'1')
+        self.graph.assert_not_awaited();self.lens.assert_not_awaited();self.serp.assert_not_awaited()
 
     async def test_snapshot_uses_reservations_custom_window_and_failed_attempts(self):
         self.sql.run(f"INSERT INTO public.usage_reservations(user_id,operation,created_at) VALUES ('{OWNER}','job',now()),('{OWNER}','claims',now()),('{OWNER}','ideation',now()-interval '8 days')")
@@ -212,7 +242,7 @@ class Milestone1SQLTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(operation=operation):
                 self.assertEqual(sum(r.status_code in (200, 202) for r in responses), 1)
                 self.assertEqual(sum(r.status_code == 402 for r in responses), 7)
-                self.assertEqual(self.model.await_count + self.graph.await_count, 1)
+                self.assertEqual(self.model.await_count + self.graph.await_count, 0 if operation == "job" else 1)
                 self.assertEqual(self.sql.run("SELECT count(*) FROM public.usage_reservations"), str(limit))
 
     async def test_quota_store_failure_launches_no_paid_work(self):

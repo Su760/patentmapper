@@ -1,5 +1,6 @@
 """HTTP security regressions. External services are mocked; no real keys required."""
 import asyncio
+import uuid
 import copy
 import json
 import os
@@ -64,7 +65,7 @@ class SecurityDB(MemoryDB):
         return Query(self, name)
 
     def rpc(self, name, params):
-        assert name == "reserve_paid_operation"
+        assert name in ("reserve_paid_operation", "admit_analysis")
 
         async def execute():
             if self.quota_failure:
@@ -76,14 +77,18 @@ class SecurityDB(MemoryDB):
                 await asyncio.sleep(0)
                 if "subscriptions" in self.fail_tables:
                     raise RuntimeError("synthetic subscription outage")
-                user, operation = params["p_user_id"], params["p_operation"]
+                user, operation = params["p_user_id"], params.get("p_operation", "job")
                 pro = user != GUEST and any(r["user_id"] == user and r["plan"] == "pro" and r["status"] == "active" for r in self.rows["subscriptions"])
                 limit = params["p_pro_limit"] if pro else params["p_free_limit"]
                 if sum(r == (user, operation) for r in self.reservations) >= limit:
-                    return SimpleNamespace(data="user_limit")
+                    return SimpleNamespace(data={"outcome":"user_limit"} if name == "admit_analysis" else "user_limit")
                 if len(self.reservations) >= params["p_global_limit"]:
-                    return SimpleNamespace(data="global_limit")
+                    return SimpleNamespace(data={"outcome":"global_limit"} if name == "admit_analysis" else "global_limit")
                 self.reservations.append((user, operation))
+                if name == "admit_analysis":
+                    job_id = str(uuid.uuid4())
+                    self.rows["searches"].append({"id":job_id,"user_id":user,"status":"queued",**params['p_payload']})
+                    return SimpleNamespace(data={"outcome":"accepted","job_id":job_id,"status":"queued"})
                 return SimpleNamespace(data="allowed")
 
         return SimpleNamespace(execute=execute)
@@ -99,13 +104,15 @@ class PrivateAnalysesTest(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.aclose)
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.graph = self.stack.enter_context(patch("app.api.routes._run_graph", new=AsyncMock()))
+        self.graph = self.stack.enter_context(patch("app.worker.run_claim", new=AsyncMock()))
         self.model = self.stack.enter_context(patch("app.api.routes.create_chat_completion", new=AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"claims": [], "invention_name": "Fixture"})))]))))
         self.groq = self.stack.enter_context(patch("app.api.routes.AsyncGroq"))
         self.lens = self.stack.enter_context(patch("app.agents.nodes.fetcher.fetch_lens_patents", new=AsyncMock()))
         self.serp = self.stack.enter_context(patch("app.agents.nodes.fetcher.fetch_serpapi_patents", new=AsyncMock()))
 
     async def request(self, method, path, token="owner", body=None):
+        if path == "/api/jobs" and isinstance(body, dict):
+            body = {"submission_key": str(uuid.uuid4()), **body}
         headers = {"Authorization": f"Bearer {token}"} if token is not None else {}
         return await self.client.request(method, path, headers=headers, json=body)
 
@@ -207,7 +214,7 @@ class PrivateAnalysesTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(operation=operation):
                 self.assertEqual(sum(r.status_code in (200, 202) for r in responses), 1)
                 self.assertEqual(sum(r.status_code == 402 for r in responses), 7)
-                self.assertEqual(self.graph.await_count + self.model.await_count, 1)
+                self.assertEqual(self.graph.await_count + self.model.await_count, 0 if operation == "job" else 1)
 
     async def test_pro_and_global_budget_are_finite(self):
         from app.core.config import settings
@@ -225,6 +232,13 @@ class PrivateAnalysesTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.request("POST", f"/api/jobs/{JOB}/ideate", body=body)).status_code, 422)
         self.assertEqual((await self.request("GET", "/api/jobs/not-a-uuid")).status_code, 422)
         self.assertEqual(self.db.reservations, [])
+        self.assert_no_paid_work()
+
+    async def test_missing_or_malformed_submission_key_reserves_nothing(self):
+        for body in ({"invention_idea":IDEA}, {"invention_idea":IDEA,"submission_key":"not-a-uuid"}):
+            r=await self.client.post('/api/jobs',headers={"Authorization":"Bearer owner"},json=body)
+            self.assertEqual(r.status_code,422)
+        self.assertEqual(self.db.reservations,[])
         self.assert_no_paid_work()
 
     async def test_lens_authorization_header_is_never_logged(self):

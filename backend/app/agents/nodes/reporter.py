@@ -15,6 +15,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
 
@@ -77,11 +78,9 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     search_id = state["search_id"]
     logger.info("[reporter] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "writing_report"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "writing_report")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         report = _build_mock_report(state)
         logger.info("[reporter] mock mode — report generated (%d chars)", len(report))
         return {"final_report": report, "citation_links": []}

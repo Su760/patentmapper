@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { prepareSubmission, pendingSubmission, confirmSubmission } from "@/lib/submission";
+import { RESULTS_POLLING } from "@/lib/results-config";
 import { createJob } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -43,6 +45,24 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [showLimitModal, setShowLimitModal] = useState(false);
 
+  const owner = session?.user.id;
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  const requestRef = useRef<AbortController | null>(null);
+  const [uncertain, setUncertain] = useState(false);
+  useEffect(() => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setIsLoading(false);
+    setError(null);
+    setShowLimitModal(false);
+    const previous = owner ? pendingSubmission(owner) : null;
+    setInventionText(previous?.invention ?? "");
+    setJurisdiction((previous?.jurisdiction as JurisdictionValue) ?? "all");
+    setUncertain(!!previous);
+    return () => requestRef.current?.abort();
+  }, [owner]);
+
   const charCount = inventionText.length;
   const isTooShort = charCount > 0 && charCount < MIN_CHARS;
   const canSubmit =
@@ -52,20 +72,33 @@ export default function Home() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || requestRef.current) return;
     if (!session) {
       router.push("/results/demo");
       return;
     }
 
+    const submittedOwner = session.user.id;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), RESULTS_POLLING.timeoutMs);
+    const current = () => ownerRef.current === submittedOwner && requestRef.current === controller;
     setIsLoading(true);
     setError(null);
 
     try {
-      const { job_id } = await createJob(inventionText, jurisdiction);
+      const submission = prepareSubmission(submittedOwner, inventionText, jurisdiction);
+      const { job_id } = await createJob(
+        submission.invention, submission.jurisdiction, submission.key,
+        session.access_token, controller.signal,
+      );
+      confirmSubmission(submittedOwner, submission.key);
+      if (!current() || controller.signal.aborted) return;
       saveJobId(job_id);
       router.push(`/results/${job_id}`);
     } catch (err) {
+      if (!current()) return;
+      setUncertain(true);
       if (
         err instanceof Error &&
         (err as Error & { code?: string }).code === "limit_reached"
@@ -75,11 +108,17 @@ export default function Home() {
         return;
       }
       setError(
-        err instanceof Error
+        controller.signal.aborted ? "Submission timed out. Retry unchanged inputs to recover the same job." : err instanceof Error
           ? err.message
-          : "Failed to connect to backend. Make sure it's running on port 8000.",
+          : "Submission could not be confirmed. Retry unchanged inputs.",
       );
       setIsLoading(false);
+    } finally {
+      clearTimeout(timeout);
+      if (current()) {
+        requestRef.current = null;
+        setIsLoading(false);
+      }
     }
   }
 
@@ -117,6 +156,11 @@ export default function Home() {
             the $500/mo enterprise tools.
           </p>
 
+          {uncertain && <p role="status">
+            An earlier submission is unconfirmed. Submit the same inputs to recover
+            its job without another reservation. Changing inputs starts a separate
+            paid analysis.
+          </p>}
           <form onSubmit={handleSubmit} className="pm-form-shell">
             <div className="pm-form-inner">
               <div className="pm-form-row">

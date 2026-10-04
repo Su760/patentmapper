@@ -2,6 +2,7 @@ from typing import Any, Dict, List, TypedDict
 
 
 class LandscapeState(TypedDict):
+    lease_token: str
     search_id: str
     invention_idea: str
     jurisdiction: str  # "all" | "us" | "ep" | "wo"

@@ -4,6 +4,8 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { DEMO_JOB_ID, DEMO_META } from "@/lib/demo";
+import { getJobStatus } from "@/lib/api";
+import { startJobPolling } from "@/lib/poll-job";
 import { createClient } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -13,6 +15,7 @@ import UsageSummary from "@/components/UsageSummary";
 interface DashboardItem {
   id: string;
   status:
+    | "queued" | "running" | "finalizing" | "interrupted"
     | "processing"
     | "completed"
     | "insufficient_evidence"
@@ -45,6 +48,10 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 function StatusBadge({ status }: { status: DashboardItem["status"] }) {
+  if (status === "queued") return <span className="pm-badge blue">Queued</span>;
+  if (status === "finalizing") return <span className="pm-badge blue">Saving output</span>;
+  if (status === "interrupted") return <span className="pm-badge red">Interrupted</span>;
+  if (!status) return <span className="pm-pill">Status unavailable</span>;
   if (status === "insufficient_evidence")
     return <span className="pm-pill">Insufficient evidence</span>;
   if (status === "completed") {
@@ -106,7 +113,7 @@ function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [showBanner, setShowBanner] = useState(false);
   const [filter, setFilter] = useState<
-    "all" | "completed" | "processing" | "failed"
+    "all" | "completed" | "queued" | "running" | "finalizing" | "interrupted" | "failed"
   >("all");
   const [q, setQ] = useState("");
 
@@ -122,6 +129,7 @@ function DashboardContent() {
     if (authLoading) return;
 
     let cancelled = false;
+    const stopPollers: (() => void)[] = [];
     setItems([]);
     setLoading(true);
     setHistoryError(null);
@@ -157,6 +165,23 @@ function DashboardContent() {
             })),
           );
           setLoading(false);
+          for (const row of data ?? []) {
+            if (!["queued", "running", "finalizing", "processing"].includes(row.status)) continue;
+            stopPollers.push(startJobPolling({
+              read: (signal) => getJobStatus(row.id, signal),
+              onStatus: (status) => {
+                if (cancelled) return;
+                setItems((items) => items.map((item) => item.id === row.id ? {
+                  ...item, status: status.status,
+                  current_step: status.current_step, error_message: status.error_message,
+                } : item));
+              },
+              onError: (message, stopped) => {
+                if (!cancelled) setHistoryError(`${message} ${stopped
+                  ? "Status monitoring paused; reload to check again." : "Retrying status."}`);
+              },
+            }));
+          }
         });
     } else {
       // localStorage job UUIDs do not authorize access to legacy/private searches.
@@ -174,6 +199,7 @@ function DashboardContent() {
     }
     return () => {
       cancelled = true;
+      stopPollers.forEach((stop) => stop());
     };
   }, [user, authLoading]);
 
@@ -186,12 +212,15 @@ function DashboardContent() {
   );
 
   const filterTabs: {
-    v: "all" | "completed" | "processing" | "failed";
+    v: "all" | "completed" | "queued" | "running" | "finalizing" | "interrupted" | "failed";
     n: string;
   }[] = [
     { v: "all", n: "All" },
     { v: "completed", n: "Completed" },
-    { v: "processing", n: "Running" },
+    { v: "queued", n: "Queued" },
+    { v: "running", n: "Running" },
+    { v: "finalizing", n: "Saving" },
+    { v: "interrupted", n: "Interrupted" },
     { v: "failed", n: "Failed" },
   ];
 
@@ -459,12 +488,12 @@ function DashboardContent() {
                             className="mono"
                             style={{ fontSize: 10.5 }}
                           >{`id: ${item.id.slice(0, 8)}`}</span>
-                          {stepLabel && item.status === "processing" && (
+                          {stepLabel && ["processing", "running", "queued", "finalizing"].includes(item.status ?? "") && (
                             <span style={{ color: "var(--blue)" }}>
                               · {stepLabel}
                             </span>
                           )}
-                          {item.error_message && item.status === "failed" && (
+                          {item.error_message && ["failed", "interrupted"].includes(item.status ?? "") && (
                             <span style={{ color: "var(--red)" }}>
                               · {item.error_message}
                             </span>

@@ -14,6 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
 
@@ -93,11 +94,9 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
         len(state["deduped_patents"]),
     )
 
-    await supabase.table("searches").update({"current_step": "clustering"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "clustering")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         logger.info("[clusterer] mock mode — returning %d clusters", len(MOCK_CLUSTERS))
         return {"clusters": MOCK_CLUSTERS}
 

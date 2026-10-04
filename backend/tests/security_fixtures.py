@@ -17,7 +17,7 @@ class MemoryDB:
         return MemoryQuery(self, name)
 
     def rpc(self, _name, _params):
-        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data="allowed")))
+        return SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(data=True if _name.endswith("_analysis") else "allowed")))
 
 
 class MemoryQuery:

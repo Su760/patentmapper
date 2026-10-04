@@ -13,6 +13,7 @@ import httpx
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.patent_api import fetch_lens_patents, fetch_serpapi_patents
 
@@ -127,11 +128,9 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
         len(state["search_queries"]),
     )
 
-    await supabase.table("searches").update({"current_step": "fetching_patents"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "fetching_patents")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         logger.info("[fetcher] mock mode — returning %d patents", len(MOCK_PATENTS))
         return {"raw_patents": MOCK_PATENTS, "retrieval_outcome": "complete", "coverage_warnings": []}
 
@@ -154,7 +153,7 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
             except Exception:
                 failures += 1
                 logger.warning("[fetcher] Lens request failed; checking configured fallback")
-            if settings.serpapi_enabled:
+            if option("serpapi_enabled"):
                 try:
                     results = await fetch_serpapi_patents(query, client, settings.serpapi_key, jurisdiction)
                     return results, successes + 1, failures

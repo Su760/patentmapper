@@ -13,6 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
 
@@ -43,11 +44,9 @@ async def whitespace_node(state: LandscapeState, supabase: AsyncClient) -> Dict[
     search_id = state["search_id"]
     logger.info("[whitespace] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "analyzing_gaps"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "analyzing_gaps")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         logger.info("[whitespace] mock mode — returning fake analysis")
         return {"white_space_analysis": MOCK_WHITESPACE}
 

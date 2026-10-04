@@ -4,7 +4,7 @@ import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from app.api.routes import _run_graph
+from app.worker import run_claim
 from app.agents.graph import build_graph
 from app.agents.nodes.fetcher import fetcher_node
 from app.services.patent_api import fetch_lens_patents, fetch_serpapi_patents
@@ -17,10 +17,15 @@ REPORT = "# Exact report\n\nDistinct from gaps. Unicode: α\n"
 
 
 def state():
-    return dict(search_id=JOB, invention_idea="Synthetic irrigation invention", jurisdiction="all",
+    return dict(search_id=JOB, lease_token=JOB, invention_idea="Synthetic irrigation invention", jurisdiction="all",
                 search_queries=["query"], raw_patents=[], deduped_patents=[PATENT], clusters=[],
                 white_space_analysis="Separate gaps", final_report=REPORT, citation_links=[],
                 retrieval_outcome="complete", coverage_warnings=[], errors=[])
+
+
+def claim():
+    return dict(search_id=JOB, lease_token=JOB, state="running", payload=dict(invention_idea="idea",jurisdiction="all"),
+                execution_inputs=dict(version=1,mock_mode=False,serpapi_enabled=False,groq_model="fixture"))
 
 
 class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
@@ -31,25 +36,23 @@ class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
     async def test_exact_report_and_coverage_use_single_finalization_rpc(self):
         final = state()
         final.update(retrieval_outcome="partial", coverage_warnings=["Coverage warning"])
-        rpc = AsyncMock(return_value=SimpleNamespace(data="saved"))
+        rpc = AsyncMock(return_value=SimpleNamespace(data=True))
         self.db.rpc = Mock(return_value=SimpleNamespace(execute=rpc))
-        with patch("app.api.routes.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
-            await _run_graph(JOB, "idea", "all", self.db)
-        self.db.rpc.assert_called_once()
-        name, args = self.db.rpc.call_args.args
-        self.assertEqual(name, "finalize_analysis")
-        self.assertEqual(args["p_result"]["final_report"], REPORT)
-        self.assertEqual(args["p_result"]["white_space_analysis"], "Separate gaps")
-        self.assertEqual(args["p_result"]["coverage_warnings"], ["Coverage warning"])
+        with patch("app.worker.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
+            await run_claim(self.db, claim())
+        args = next(c.args[1]["p_output"] for c in self.db.rpc.call_args_list if c.args[0] == "checkpoint_analysis")
+        self.assertEqual(args["result"]["final_report"], REPORT)
+        self.assertEqual(args["result"]["white_space_analysis"], "Separate gaps")
+        self.assertEqual(args["result"]["coverage_warnings"], ["Coverage warning"])
         self.assertFalse(any(table in ("patents", "search_results") for table, _, _ in self.db.writes))
 
     async def test_lost_finalization_response_does_not_downgrade_completion(self):
         async def lost_response():
             self.db.rows["searches"][0]["status"] = "completed"
             raise RuntimeError("database response lost after commit")
-        self.db.rpc = lambda *_: SimpleNamespace(execute=lost_response)
-        with patch("app.api.routes.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=state()))):
-            await _run_graph(JOB, "idea", "all", self.db)
+        self.db.rpc = lambda name, *_: SimpleNamespace(execute=lost_response if name == "publish_analysis" else AsyncMock(return_value=SimpleNamespace(data=True)))
+        with patch("app.worker.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=state()))):
+            await run_claim(self.db, claim())
         self.assertEqual(self.db.rows["searches"][0]["status"], "completed")
 
     async def test_total_failure_empty_and_partial_are_distinct(self):
@@ -106,7 +109,11 @@ class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await fetch_serpapi_patents("q", client, "test-only"), [])
 
     async def test_retrieval_failure_persists_explicit_failure_without_finalizing(self):
-        self.db.rpc = Mock()
+        async def execute(name, params):
+            if name == "fail_analysis":
+                self.db.rows["searches"][0].update(status="failed",error_message=params['p_error'])
+            return SimpleNamespace(data=True)
+        self.db.rpc = Mock(side_effect=lambda name, params: SimpleNamespace(execute=lambda: execute(name,params)))
         for queries in (["q"], []):
             self.db.rows["searches"][0]["status"] = "processing"
             with patch.object(settings, "mock_mode", False), patch.object(settings, "serpapi_enabled", False), \
@@ -115,9 +122,9 @@ class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
                  patch("app.agents.graph.clusterer_node", new=AsyncMock()) as cluster, \
                  patch("app.agents.graph.whitespace_node", new=AsyncMock()) as gaps, \
                  patch("app.agents.graph.reporter_node", new=AsyncMock()) as report:
-                await _run_graph(JOB, "idea", "all", self.db)
+                await run_claim(self.db, claim())
                 self.assertEqual(self.db.rows["searches"][0]["status"], "failed")
                 self.assertIn("all attempted providers failed" if queries else "no search queries", self.db.rows["searches"][0]["error_message"])
                 for model in (cluster,gaps,report): model.assert_not_awaited()
                 if not queries: lens.assert_not_awaited()
-            self.db.rpc.assert_not_called()
+            self.assertFalse(any(c.args[0] in ("checkpoint_analysis","publish_analysis") for c in self.db.rpc.call_args_list))

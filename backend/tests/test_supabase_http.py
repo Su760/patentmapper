@@ -5,6 +5,7 @@ local stack with the migrations applied and anonymous sign-ins enabled.
 Never use an application database: tests temporarily rename the quota table.
 """
 import asyncio
+import uuid
 import base64
 import hashlib
 import hmac
@@ -23,7 +24,8 @@ import httpx
 from fastapi import FastAPI
 from supabase import create_async_client
 
-from app.api.routes import router, _run_graph as run_saved_graph
+from app.api.routes import router
+from app.worker import run_claim as run_saved_graph
 from app.api.stripe_routes import router as billing_router
 from app.core.config import settings
 from app.db import get_supabase
@@ -81,7 +83,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_supabase] = lambda: db
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://fixture")
         self.addAsyncCleanup(self.client.aclose)
-        self.graph = self.enterContext(patch("app.api.routes._run_graph", new=AsyncMock()))
+        self.graph = self.enterContext(patch("app.worker.run_claim", new=AsyncMock()))
         self.model = self.enterContext(patch("app.api.routes.create_chat_completion", new=AsyncMock(return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims":[],"invention_name":"Fixture"}'))]))))
         self.lens = self.enterContext(patch("app.agents.nodes.fetcher.fetch_lens_patents", new=AsyncMock()))
         self.serp = self.enterContext(patch("app.agents.nodes.fetcher.fetch_serpapi_patents", new=AsyncMock()))
@@ -96,6 +98,8 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         return {"Authorization": f"Bearer {token}"} if token else {}
 
     async def request(self, method, path, token, body=None):
+        if path == "/api/jobs" and isinstance(body, dict):
+            body = {"submission_key": str(uuid.uuid4()), **body}
         return await self.client.request(method, path, headers=self.headers(token), json=body)
 
     def no_work(self):
@@ -134,7 +138,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
                     self.assertIn(r.status_code,(401,403))
         for token in (self.tokens[0],self.tokens[1],self.tokens[2],self.cfg["ANON_KEY"]):
             headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)}
-            for fn,args in (("finalize_analysis",{"p_search_id":self.job,"p_result":{},"p_patents":[]}),("paid_usage_snapshot",{"p_user_id":self.users[0],"p_window_seconds":1}),("reserve_paid_operation",{"p_user_id":self.users[0],"p_operation":"claims","p_free_limit":999,"p_pro_limit":999,"p_global_limit":999,"p_window_seconds":1})):
+            for fn,args in (("claim_analysis",{"p_lease_seconds":60,"p_max_active":99}),("read_analysis_status",{"p_search_id":self.job,"p_user_id":self.users[0]}),("publish_analysis",{"p_search_id":self.job,"p_token":self.job}),("admit_analysis",{"p_user_id":self.users[0],"p_submission_key":self.job,"p_payload":{},"p_execution_inputs":{},"p_free_limit":999,"p_pro_limit":999,"p_global_limit":999,"p_window_seconds":1}),("finalize_analysis",{"p_search_id":self.job,"p_result":{},"p_patents":[]}),("paid_usage_snapshot",{"p_user_id":self.users[0],"p_window_seconds":1}),("reserve_paid_operation",{"p_user_id":self.users[0],"p_operation":"claims","p_free_limit":999,"p_pro_limit":999,"p_global_limit":999,"p_window_seconds":1})):
                 r=await self.http.post(f"/rest/v1/rpc/{fn}",headers=headers,json=args)
                 self.assertIn(r.status_code,(401,403))
             r=await self.http.patch(f"/rest/v1/subscriptions?user_id=eq.{self.users[0]}",headers=headers,json={"plan":"pro"})
@@ -161,7 +165,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
                 responses=await asyncio.gather(*(self.request("POST",path,self.tokens[0],body) for _ in range(8)))
             self.assertEqual(sum(r.status_code in (200,202) for r in responses),1)
             self.assertEqual(sum(r.status_code==402 for r in responses),7)
-            self.assertEqual(self.model.await_count+self.graph.await_count,1)
+            self.assertEqual(self.model.await_count+self.graph.await_count,0 if operation == "job" else 1)
 
     async def test_quota_outage_through_postgrest_launches_no_work(self):
         self.sql("ALTER TABLE public.usage_reservations RENAME TO usage_reservations_outage")
@@ -176,9 +180,10 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         from test_saved_results import state, REPORT
         final = state(); final["search_id"] = self.job
         final.update(retrieval_outcome="partial", coverage_warnings=["Partial coverage fixture"])
-        self.sql(f"UPDATE public.searches SET status='processing' WHERE id='{self.job}'")
-        with patch("app.api.routes.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
-            await run_saved_graph(self.job, "Synthetic invention", "all", self.db)
+        lease_token = str(uuid4())
+        self.sql(f"UPDATE public.searches SET status='running' WHERE id='{self.job}'; INSERT INTO public.analysis_queue(search_id,user_id,submission_key,payload,execution_inputs,state,lease_token,lease_expires_at) VALUES ('{self.job}','{self.users[0]}','{lease_token}','{{}}','{{}}','running','{lease_token}',clock_timestamp()+interval '60 seconds')")
+        with patch("app.worker.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
+            await run_saved_graph(self.db,dict(search_id=self.job,lease_token=lease_token,state="running",payload=dict(invention_idea="Synthetic invention",jurisdiction="all"),execution_inputs=dict(version=1,mock_mode=True,serpapi_enabled=False,groq_model="fixture")))
         for token, visible in ((self.tokens[0],True),(self.tokens[1],False),(self.tokens[2],False),(self.cfg["ANON_KEY"],False)):
             r = await self.http.get(f"/rest/v1/search_results?search_id=eq.{self.job}",headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)})
             self.assertEqual(r.status_code,200)
@@ -200,4 +205,58 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         for path,body in ((f"/api/jobs/{self.job}/analyze-claims",None),(f"/api/jobs/{self.job}/ideate",{"white_space_title":"Gap","white_space_description":"Synthetic gap"})):
             self.assertEqual((await self.request("POST",path,self.tokens[0],body)).status_code,409)
         self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),"0")
+        self.no_work()
+
+    async def test_durable_admission_response_loss_owner_scope_and_worker_sdk(self):
+        from app.services.jobs import rpc
+        from test_saved_results import state, REPORT
+        body={'invention_idea':'Synthetic durable irrigation invention','jurisdiction':'us','submission_key':str(uuid4())}
+        # The first committed response is deliberately discarded, then retried concurrently.
+        first=await self.request('POST','/api/jobs',self.tokens[0],body)
+        self.assertEqual(first.status_code,202,first.text)
+        with patch.object(settings,'free_job_limit',1):
+            responses=await asyncio.gather(*(self.request('POST','/api/jobs',self.tokens[0],body) for _ in range(8)))
+        job=first.json()['job_id']
+        self.assertTrue(all(r.status_code==202 and r.json()['job_id']==job for r in responses))
+        self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),'1')
+        self.assertEqual((await self.request('POST','/api/jobs',self.tokens[0],{**body,'jurisdiction':'ep'})).status_code,409)
+        other=await self.request('POST','/api/jobs',self.tokens[1],body)
+        self.assertEqual(other.status_code,202);self.assertNotEqual(other.json()['job_id'],job)
+        self.assertEqual((await self.request('GET',f'/api/jobs/{job}',self.tokens[1])).status_code,404)
+        self.no_work()
+        claimed=await rpc(self.db,'claim_analysis',{'p_lease_seconds':60,'p_max_active':1})
+        self.assertEqual(claimed['search_id'],job)
+        final=state()
+        with patch('app.worker.build_graph',return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
+            await run_saved_graph(self.db,claimed)
+        self.assertEqual((await self.request('GET',f'/api/jobs/{job}',self.tokens[0])).json()['status'],'completed')
+        for token,visible in ((self.tokens[0],True),(self.tokens[1],False),(self.tokens[2],False),(self.cfg['ANON_KEY'],False)):
+            headers={'apikey':self.cfg['ANON_KEY'],**self.headers(token)}
+            r=await self.http.get(f'/rest/v1/search_results?search_id=eq.{job}',headers=headers)
+            self.assertEqual(r.status_code,200);self.assertEqual(bool(r.json()),visible)
+            if visible:self.assertEqual(r.json()[0]['final_report'],REPORT)
+            r=await self.http.get('/rest/v1/analysis_queue',headers=headers)
+            self.assertIn(r.status_code,(401,403))
+        # Original legacy RPC and direct service writes cannot bypass the fence.
+        r=await self.http.post('/rest/v1/rpc/finalize_analysis',headers=self.admin,json={'p_search_id':job,'p_result':{},'p_patents':[]})
+        self.assertIn(r.status_code,(401,403))
+        r=await self.http.patch(f'/rest/v1/searches?id=eq.{job}',headers=self.admin,json={'status':'failed'})
+        self.assertEqual(r.status_code,400)
+        # Claims-cache write remains authorized and independently metered.
+        self.assertEqual((await self.request('POST',f'/api/jobs/{job}/analyze-claims',self.tokens[0])).status_code,200)
+
+    async def test_status_expires_dead_worker_without_starting_paid_work(self):
+        from app.services.jobs import rpc
+        response=await self.request('POST','/api/jobs',self.tokens[2],{'invention_idea':'Synthetic anonymous durable invention'})
+        self.assertEqual(response.status_code,202,response.text)
+        job=response.json()['job_id']
+        claim=await rpc(self.db,'claim_analysis',{'p_lease_seconds':60,'p_max_active':1})
+        self.assertEqual(claim['search_id'],job)
+        self.sql(f"UPDATE public.analysis_queue SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE search_id='{job}'")
+        self.assertEqual((await self.request('GET',f'/api/jobs/{job}',self.tokens[0])).status_code,404)
+        self.assertEqual(self.sql(f"SELECT status FROM public.searches WHERE id='{job}'"),'running')
+        for _ in range(2):
+            status=await self.request('GET',f'/api/jobs/{job}',self.tokens[2])
+            self.assertEqual(status.json()['status'],'interrupted')
+        self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[2]}'"),'1')
         self.no_work()
