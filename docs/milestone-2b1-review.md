@@ -19,10 +19,10 @@ A fresh read-only reviewer inspected persistence, authorization, failure handlin
 
 | Finding | Fix and evidence |
 | --- | --- |
-| Legacy ownerless `processing` rows violate the existing NOT VALID owner constraint on UPDATE. | Migration 5 only interrupts **owned** legacy jobs; upgrade regression seeds both owned and ownerless M2a rows and confirms hidden ownerless rows remain untouched. |
-| Empty/invalid reports could become permanently unpublishable checkpoints and monopolize worker capacity. | Checkpoint and publication share validation. Fair oldest-claim ordering replaces permanent recovery priority. Real SQL tests reject bad snapshots and show a later queued job wins after a failed publication retry. |
-| A dead worker could leave stored status `running` forever without a replacement worker. | Free owner-authorized status RPC expires its lease using database time; dashboard uses the bounded status poller. Real Auth/PostgREST and browser tests cover this. |
-| Direct service mutations could bypass fencing by deleting/moving rows or truncating tables. | Row guards cover insert/update/delete and moved parent IDs; service TRUNCATE privileges revoked. SQL and actual PostgREST checks deny bypasses, while claims cache remains writable. |
+| `supabase/migrations/202610040001_durable_jobs.sql:24`: Legacy ownerless `processing` rows violate the existing NOT VALID owner constraint on UPDATE. | Migration 5 only interrupts **owned** legacy jobs; upgrade regression seeds both owned and ownerless M2a rows and confirms hidden ownerless rows remain untouched. |
+| `supabase/migrations/202610040001_durable_jobs.sql:133`: Empty/invalid reports could become permanently unpublishable checkpoints and monopolize worker capacity. | Checkpoint and publication share validation. Fair oldest-claim ordering replaces permanent recovery priority. Real SQL tests reject bad snapshots and show a later queued job wins after a failed publication retry. |
+| `backend/app/api/routes.py:228`: A dead worker could leave stored status `running` forever without a replacement worker. | Free owner-authorized status RPC expires its lease using database time; dashboard uses the bounded status poller. Real Auth/PostgREST and browser tests cover this. |
+| `supabase/migrations/202610040001_durable_jobs.sql:249`: Direct service mutations could bypass fencing by deleting/moving rows or truncating tables. | Row guards cover insert/update/delete and moved parent IDs; service TRUNCATE privileges revoked. SQL and actual PostgREST checks deny bypasses, while claims cache remains writable. |
 
 ## Migration and startup
 
@@ -65,7 +65,7 @@ The worker requires a long-running process; an API-only installation will retain
 | Status, saved report or cached claims reads | Read saved data only | Free |
 | Claims generation/regeneration or ideation | Existing M1 authorization/reservation | One operation reservation; failures remain consumed |
 
-Publication retries are database-only, throttled by lease expiry and global capacity, and fairly ordered against queued jobs. Persistent schema/storage problems need operator repair; output stays private and unpublished until publication succeeds. There is no partial-stage replay, automatic paid retry or blanket refund. A crash after a provider response but before its checkpoint remains interrupted. Network requests already in flight may have been charged after cancellation; **exactly-once external execution is not claimed**.
+Publication retries are database-only, throttled by lease expiry and global capacity, and fairly ordered against queued jobs. Persistent schema/storage problems need operator repair; output stays private and unpublished until publication succeeds. There is no partial-stage replay, automatic replay of an interrupted paid graph or blanket refund. Existing bounded provider retries within one live execution remain unchanged. A crash after a provider response but before its checkpoint remains interrupted. Network requests already in flight may have been charged after cancellation; **exactly-once external execution is not claimed**.
 
 Rollback is not a blind application revert: the old API omits keys, creates unqueued processing rows and calls an RPC whose service execution is now revoked. Prefer a coordinated forward fix. Do not drop the queue, checkpoint or usage ledger, reset expired jobs to queued, or bypass fencing to make old code run. Owner/key deduplication lasts while the job exists; administrative deletion removes its key and does not refund the reservation.
 
@@ -128,7 +128,7 @@ Development failures resolved before the final run:
 - SQL fixture initially parsed PostgreSQL `t/f` as JSON; corrected boolean decoding.
 - A DELETE-fence assertion targeted no result row (`AssertionError: RuntimeError not raised`); seeded a real durable result and reran successfully.
 
-No required local check remains NOT RUN. Live paid-provider integration, production migration/deployment, Windows worker support, Vercel preview diagnosis and global-hook diagnosis were intentionally NOT RUN and are not claimed verified. Hosted final-commit CI is reported in the branch handoff after push.
+No required local check remains NOT RUN. Live paid-provider integration, production migration/deployment, Windows worker support, Vercel preview diagnosis and global-hook diagnosis were intentionally NOT RUN and are not claimed verified. Hosted application CI passed both jobs at `cbb1ea1`: [Checks run 37187110777](https://github.com/Su760/patentmapper/actions/runs/37187110777) (63 backend/SQL tests in the main job, 9 Auth/PostgREST tests separately, 24 frontend tests and lint/typecheck/build). The source is unchanged by the final handoff documentation commit; its CI is checked separately and linked in the final handoff. The GitHub-connected Vercel preview check failed; its cause is unverified and diagnosis remains a separate task. No Vercel commands/settings were used to change it.
 
 ## Changed files and deferred work
 
