@@ -1,6 +1,6 @@
 # M3a — persisted evidence provenance and read-only workbench
 
-Base/remote verified at `85fc0f1df64efe3a2bc008e7362ddf94aa38e8e5` on `milestone-2b-durable-jobs`. Isolated branch: `milestone-3a-evidence-workbench`, worktree `/tmp/patentmapper-m3a`. Original dirty main has an external 86-file SHA-256 preservation snapshot and is excluded from this branch. The approved plan/file boundary is recorded at the top of `tasks/todo.md`.
+Base/remote verified at `85fc0f1df64efe3a2bc008e7362ddf94aa38e8e5` on `milestone-2b-durable-jobs`. Isolated branch: `milestone-3a-evidence-workbench`, worktree `/tmp/patentmapper-m3a`. All 86 files in the original dirty main SHA-256 preservation snapshot remain unchanged; that checkout is excluded from this branch. The approved plan/file boundary is recorded at the top of `tasks/todo.md`.
 
 ## Behavior and evidence contract
 
@@ -108,7 +108,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000/api npm run build
 npx playwright test --config playwright.config.cjs
 ```
 
-PostgreSQL 18 used a disposable local socket; Supabase used separate local Docker services with real Auth/PostgREST. Generated credentials remain outside git. The test harness resets only a guarded local database named `patentmapper_m1_test`. Existing CI discovers all new tests: main job uses Python 3.13/PostgreSQL 17; the separate Auth/PostgREST job runs 10 tests. The final commit's hosted run/status is linked in the final handoff.
+PostgreSQL 18 used a disposable local socket; Supabase used separate local Docker services with real Auth/PostgREST. Generated credentials remain outside git. The test harness resets only a guarded local database named `patentmapper_m1_test`. Existing CI discovers all new tests: main job uses Python 3.13/PostgreSQL 17; the separate Auth/PostgREST job runs 10 tests. Hosted [Checks run 37265506951](https://github.com/Su760/patentmapper/actions/runs/37265506951) passed both jobs (79 backend/SQL tests, 10 Auth/PostgREST tests, 30 frontend tests and lint/typecheck/build) at implementation commit `831420c`. The final documentation-only commit is checked separately; its exact run/status is linked in the final handoff.
 
 Observed development failures, not hidden:
 
@@ -126,6 +126,7 @@ Observed development failures, not hidden:
 - `frontend/src/app/globals.css:605`: existing `.pm-sticky-meta` has `flex-shrink: 0` without wrapping and overflows small screens; unchanged under the no-adjacent-fix rule.
 - `frontend/package.json:14`: pinned Next.js 14.2.3 emits an installation security warning; dependency upgrade is outside this milestone and was not performed.
 - Existing lint warnings remain at `frontend/src/app/layout.tsx:26` and `frontend/src/lib/auth-context.tsx:35`; no new lint warning remains. Dependency deprecation/Browserslist and Playwright color-environment warnings remain.
+- The GitHub-connected Vercel automatic preview check reports failure at `831420c`; cause is unverified, as in M2b. No Vercel settings or deployment commands were used.
 - Live Lens/Groq/SerpAPI integration, paid claims/ideation, production migration, deployment and Vercel/global-hook diagnostics were intentionally **NOT RUN**. Fixtures verify contracts, not provider uptime or retrieval quality. Known Lens coverage/filter limits remain explicit.
 - Old free-form reports and overlap prose remain unverified model inference; this change does not repair historical factual claims. It blocks unknown structured references from appearing as retrieved records.
 - No new providers, full-text claims scraping, generated claim-to-quote matrix, automatic paid retries/refunds, full stage replay, broad redesign or quality benchmark was added.
