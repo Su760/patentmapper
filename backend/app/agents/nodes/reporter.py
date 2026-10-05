@@ -18,6 +18,7 @@ from app.agents.state import LandscapeState
 from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
+from app.services.evidence import validate_references
 
 logger = logging.getLogger(__name__)
 
@@ -155,4 +156,6 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     except Exception as e:
         logger.warning("[reporter] citation link generation failed, using []: %s", e)
 
-    return {"final_report": report, "citation_links": citation_links}
+    _, citation_links, warnings = validate_references([], citation_links, state["deduped_patents"])
+    return {"final_report": report, "citation_links": citation_links,
+            "analysis_warnings": state.get("analysis_warnings", []) + warnings}

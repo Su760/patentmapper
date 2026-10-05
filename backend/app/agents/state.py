@@ -15,4 +15,7 @@ class LandscapeState(TypedDict):
     retrieval_outcome: str  # complete | partial | insufficient_evidence
     coverage_warnings: List[str]
     citation_links: List[Dict[str, Any]]  # [{"source": "US123", "target": "US456", "strength": 0.8}]
+    evidence_version: int
+    requested_jurisdiction: str
+    analysis_warnings: List[str]
     errors: List[str]

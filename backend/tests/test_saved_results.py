@@ -12,7 +12,10 @@ from app.core.config import settings
 from security_fixtures import MemoryDB
 
 JOB = "10000000-0000-0000-0000-000000000001"
-PATENT = {"patent_id": "US1", "title": "Synthetic patent", "abstract": "Evidence"}
+from app.services.evidence import observation, with_evidence
+PATENT = with_evidence({"patent_id": "US1", "title": "Synthetic patent", "abstract": "Evidence"}, [observation(
+    provider="synthetic", record_id="US1", publication_id=None, url=None, query="", text="Evidence",
+    text_type="synthetic", jurisdiction="all", dates={})])
 REPORT = "# Exact report\n\nDistinct from gaps. Unicode: α\n"
 
 
@@ -25,7 +28,7 @@ def state():
 
 def claim():
     return dict(search_id=JOB, lease_token=JOB, state="running", payload=dict(invention_idea="idea",jurisdiction="all"),
-                execution_inputs=dict(version=1,mock_mode=False,serpapi_enabled=False,groq_model="fixture"))
+                execution_inputs=dict(version=2,mock_mode=False,serpapi_enabled=False,groq_model="fixture"))
 
 
 class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
@@ -70,7 +73,7 @@ class SavedResultsTest(unittest.IsolatedAsyncioTestCase):
                 else:
                     result = await fetcher_node(state(), self.db)
                     self.assertEqual(result["retrieval_outcome"], expected)
-                    self.assertEqual(bool(result["coverage_warnings"]), isinstance(lens, Exception) or isinstance(serp, Exception) and lens == [])
+                    self.assertEqual(any("failed" in w for w in result["coverage_warnings"]), isinstance(lens, Exception) or isinstance(serp, Exception) and lens == [])
 
     async def test_disabled_fallback_and_mixed_queries(self):
         with patch.object(settings, "mock_mode", False), patch.object(settings, "serpapi_enabled", False), \

@@ -26,14 +26,14 @@ class DurableJobsSQLTest(unittest.TestCase):
         out = self.sql.run(f"SET ROLE service_role; SELECT public.{name}({args})")
         return (out == "t") if out in ("t", "f") else json.loads(out) if out else None
 
-    def admit(self, owner=OWNER, key=None, idea=IDEA, limit=10):
+    def admit(self, owner=OWNER, key=None, idea=IDEA, limit=10, version=1):
         return self.rpc(
             "admit_analysis",
             p_user_id=owner,
             p_submission_key=key or self.key,
             p_payload=dict(invention_idea=idea, jurisdiction="us"),
             p_execution_inputs=dict(
-                version=1, mock_mode=True, groq_model="fixture", serpapi_enabled=False
+                version=version, mock_mode=True, groq_model="fixture", serpapi_enabled=False
             ),
             p_free_limit=limit,
             p_pro_limit=limit,
@@ -207,7 +207,7 @@ class DurableJobsSQLTest(unittest.TestCase):
 
     def test_forward_migration_keeps_ownerless_legacy_processing_hidden(self):
         self.sql.apply(m1.ROOT / "supabase/tests/bootstrap.sql")
-        for path in sorted((m1.ROOT / "supabase/migrations").glob("*.sql"))[:-1]:
+        for path in [p for p in sorted((m1.ROOT / "supabase/migrations").glob("*.sql")) if p.name < "202610040001_durable_jobs.sql"]:
             self.sql.apply(path)
         self.sql.run(
             f"INSERT INTO auth.users(id) VALUES ('{OWNER}'); INSERT INTO public.searches(user_id,invention_idea,status) VALUES ('{OWNER}','Owned legacy','processing'); ALTER TABLE public.searches DROP CONSTRAINT searches_owner_required; INSERT INTO public.searches(invention_idea,status) VALUES ('Hidden legacy','processing'); ALTER TABLE public.searches ADD CONSTRAINT searches_owner_required CHECK(user_id IS NOT NULL) NOT VALID"

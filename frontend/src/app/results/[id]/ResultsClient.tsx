@@ -10,6 +10,9 @@ import {
   WhiteSpaceIdea,
   analyzeClaimsRequest,
   ClaimResult,
+  getEvidence,
+  EvidenceResponse,
+  EvidencePatent,
 } from "@/lib/api";
 import { RESULTS_POLLING } from "@/lib/results-config";
 import { startJobPolling } from "@/lib/poll-job";
@@ -18,6 +21,7 @@ import { useAuth } from "@/lib/auth-context";
 import { DEMO_JOB_ID, DEMO_META, DEMO_RESULTS } from "@/lib/demo";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
+import EvidenceWorkbench, { patentSource } from "@/components/EvidenceWorkbench";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -496,7 +500,7 @@ function TrendCard({ cluster, color }: { cluster: Cluster; color: string }) {
   );
 }
 
-function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
+function ClusterCard({ cluster, color, patents }: { cluster: Cluster; color: string; patents: EvidencePatent[] }) {
   const maxCount = Math.max(
     ...(cluster.top_assignees ?? []).map((a) => a.count),
     1,
@@ -509,7 +513,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
       <div className="pm-cluster-head">
         <span className="pm-cluster-dot"></span>
         <span className="pm-cluster-name">{cluster.theme_name}</span>
-        <span className="pm-cluster-meta">{cluster.patent_ids.length} pat</span>
+        <span className="pm-cluster-meta">{cluster.patent_ids.length} records</span>
       </div>
       <p className="pm-cluster-desc">{cluster.description}</p>
       {cluster.ipc_codes && cluster.ipc_codes.length > 0 && (
@@ -532,7 +536,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
               <div key={a.name}>
                 <div className="pm-player">
                   <span className="pm-player-name">{a.name}</span>
-                  <span className="pm-player-count">{a.count} patents</span>
+                  <span className="pm-player-count">{a.count} records</span>
                 </div>
                 <div className="pm-player-bar">
                   <i style={{ width: `${(a.count / maxCount) * 100}%` }}></i>
@@ -546,7 +550,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
         {cluster.patent_ids.slice(0, 4).map((pid) => (
           <a
             key={pid}
-            href={`https://patents.google.com/patent/${pid}`}
+            href={patentSource(patents.find(p => p.patent_id === pid)) ?? "#saved-evidence"}
             target="_blank"
             rel="noopener noreferrer"
             className="pm-chip tiny"
@@ -751,10 +755,12 @@ function PatentGraphSection({
 function NodeSidePanel({
   node,
   clusters,
+  patents,
   onClose,
 }: {
   node: GraphNode;
   clusters: Cluster[];
+  patents: EvidencePatent[];
   onClose: () => void;
 }) {
   // Click-outside to close
@@ -844,7 +850,7 @@ function NodeSidePanel({
         </div>
       )}
       <a
-        href={`https://patents.google.com/patent/${node.id}`}
+        href={patentSource(patents.find(p => p.patent_id === node.id)) ?? "#saved-evidence"}
         target="_blank"
         rel="noopener noreferrer"
         style={{
@@ -855,7 +861,7 @@ function NodeSidePanel({
           textDecoration: "none",
         }}
       >
-        View on Google Patents →
+        Inspect saved source →
       </a>
     </div>
   );
@@ -935,7 +941,7 @@ function ClaimCard({ claim }: { claim: ClaimResult }) {
         {claim.title}
       </p>
       <p className="pm-cluster-section-label" style={{ marginBottom: 6 }}>
-        Likely Claims
+        AI-inferred technical aspects
       </p>
       <ul
         style={{
@@ -996,6 +1002,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(
     null,
   );
+  const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [claimsWarnings, setClaimsWarnings] = useState<string[]>([]);
   const [claimsError, setClaimsError] = useState<string | null>(null);
 
   const [claimsCacheReady, setClaimsCacheReady] = useState(false);
@@ -1004,6 +1013,27 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const claimsPending = useRef(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout>>();
   const claimsSectionRef = useRef<HTMLElement | null>(null);
+
+  const loadEvidence = useCallback(async (signal: AbortSignal, version: number) => {
+    const scope = accessScope.current;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal.aborted) return;
+    signal.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, RESULTS_POLLING.timeoutMs);
+    const current = () => !signal.aborted && epoch.current === version && scope === accessScope.current;
+    setEvidenceError(null);
+    try {
+      const saved = await getEvidence(jobId, controller.signal);
+      if (current()) setEvidence(saved);
+    } catch (error) {
+      if (current()) setEvidenceError(controller.signal.aborted ? "Saved evidence timed out. Retry reads saved data only."
+        : error instanceof Error ? error.message : "Saved evidence unavailable.");
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
+    }
+  }, [jobId]);
 
   const loadCachedClaims = useCallback(
     async (signal: AbortSignal, version: number) => {
@@ -1020,9 +1050,10 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       setClaimsCacheReady(false);
       setClaimsError(null);
       try {
-        const { claims } = await getClaimsAnalysis(jobId, controller.signal);
+        const { claims, warnings } = await getClaimsAnalysis(jobId, controller.signal);
         if (!current() || signal.aborted) return;
         setClaimsAnalysis(claims);
+        setClaimsWarnings(warnings ?? []);
         setClaimsCacheReady(true);
       } catch (error) {
         if (!current() || signal.aborted) return;
@@ -1082,12 +1113,13 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     setAnalyzingClaims(true);
     setClaimsError(null);
     try {
-      const { claims } = await analyzeClaimsRequest(
+      const { claims, warnings } = await analyzeClaimsRequest(
         jobId,
         lifecycle.current?.signal,
       );
       if (scope !== accessScope.current || version !== epoch.current) return;
       setClaimsAnalysis(claims);
+        setClaimsWarnings(warnings ?? []);
     } catch (e) {
       if (scope === accessScope.current && version === epoch.current)
         setClaimsError(e instanceof Error ? e.message : "Analysis failed");
@@ -1130,6 +1162,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
     setRenderScope(scope);
     setSearchMeta(null);
     setSearchResult(null);
+    setEvidence(null);
+    setEvidenceError(null);
+    setClaimsWarnings([]);
     setClaimsAnalysis(null);
     setClaimsCacheReady(false);
     setIdeas({});
@@ -1202,6 +1237,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           setPhase("completed");
           // Viewing saved claims never calls the paid generation endpoint.
           void loadCachedClaims(controller.signal, version);
+          void loadEvidence(controller.signal, version);
         },
         onError: (message, stopped, unauthorized) => {
           if (!current()) return;
@@ -1227,7 +1263,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       stop();
       clearTimeout(copyTimer.current);
     };
-  }, [jobId, userId, authLoading, isDemo, reload, loadCachedClaims]);
+  }, [jobId, userId, authLoading, isDemo, reload, loadCachedClaims, loadEvidence]);
 
   async function retryCachedClaims() {
     const controller = lifecycle.current;
@@ -1432,11 +1468,13 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const gaps = insufficient
     ? []
     : parseWhiteSpace(searchResult.white_space_analysis ?? "");
-  const clusters: Cluster[] = Array.isArray(searchResult.clusters)
-    ? searchResult.clusters
-    : [];
-  const citationLinks = searchResult.citation_links ?? [];
-  const totalPatents = clusters.flatMap((c) => c.patent_ids).length;
+  const savedPatents = evidence?.patents ?? [];
+  const savedIds = new Set(savedPatents.map(p => p.patent_id));
+  const clusters: Cluster[] = (evidence?.clusters ?? []).map(c => ({
+    ...c, patent_ids: Array.from(new Set(c.patent_ids.filter(id => savedIds.has(id)))), filing_trend: [],
+  }));
+  const citationLinks = (evidence?.citation_links ?? []).filter(l => savedIds.has(l.source) && savedIds.has(l.target) && l.source !== l.target);
+  const totalPatents = savedPatents.length;
 
   return (
     <div className="pm" style={{ minHeight: "100%" }}>
@@ -1473,7 +1511,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           </span>
           <span className="pm-pill">
             <span className="dot" style={{ background: "var(--green)" }}></span>
-            {totalPatents} patents
+            {totalPatents} records
           </span>
           <span
             style={{
@@ -1501,6 +1539,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           )}
         </div>
       </div>
+      <EvidenceWorkbench key={renderScope} data={evidence} error={evidenceError}
+        onRetry={() => { if (lifecycle.current) void loadEvidence(lifecycle.current.signal, epoch.current); }} />
+      <p className="px-8 py-3 text-sm">Clusters, relationships, gaps and reports are AI inference from limited available text. They are not retrieved patent claim language or verified citations.</p>
       {insufficient && (
         <p role="status" style={{ padding: 32 }}>
           Insufficient evidence: retrieval succeeded but no usable patents were
@@ -1594,6 +1635,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           <div className="pm-cluster-grid">
             {clusters.map((cluster, idx) => (
               <ClusterCard
+                patents={savedPatents}
                 key={cluster.theme_name}
                 cluster={cluster}
                 color={CLUSTER_COLORS[idx % CLUSTER_COLORS.length]}
@@ -1654,6 +1696,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       {/* Node side panel */}
       {selectedNode && (
         <NodeSidePanel
+          patents={savedPatents}
           node={selectedNode}
           clusters={clusters}
           onClose={() => setSelectedNode(null)}
@@ -1726,13 +1769,17 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               ? "Fixed synthetic sample; no usage consumed."
               : "Uses 1 claims allowance per generation or regeneration. Failed paid attempts also count. Reading saved claims is free."}
           </p>
+          {claimsWarnings.map((warning, index) => <p role="status" key={index}>{warning}</p>)}
+          <p>AI inference from available abstracts, search snippets or titles. No patent claim language was retrieved. Older saved wording also remains unverified model inference.</p>
           {claimsError && (
             <p role="alert">Claim analysis unavailable: {claimsError}</p>
           )}
           {!claimsCacheReady ? (
             <>
               {!claimsError && <p>Loading saved claims...</p>}
-              {claimsError && (
+              {claimsWarnings.map((warning, index) => <p role="status" key={index}>{warning}</p>)}
+          <p>AI inference from available abstracts, search snippets or titles. No patent claim language was retrieved. Older saved wording also remains unverified model inference.</p>
+          {claimsError && (
                 <button className="pm-btn" onClick={retryCachedClaims}>
                   Retry saved claims
                 </button>
@@ -1776,7 +1823,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               fontFamily: "var(--font-mono)",
             }}
           >
-            This analysis is AI-generated from patent abstracts only and does
+            This analysis is AI inference from available text and does
             not constitute legal advice. Consult a patent attorney for formal
             freedom-to-operate analysis.
           </p>

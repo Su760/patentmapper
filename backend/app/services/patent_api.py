@@ -7,6 +7,8 @@ from typing import Any, Dict, List
 
 import httpx
 from app.services.execution import before_paid_call
+from app.services.evidence import observation, with_evidence, string
+from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 PATENTSVIEW_URL = "https://api.patentsview.org/patents/query"
@@ -116,10 +118,10 @@ async def fetch_serpapi_patents(
         pub_info = r.get("publication_info", {})
         summary = pub_info.get("summary", "")
         assignee = summary.split(" · ")[0] if " · " in summary else summary
-        pid = r.get("patent_id") or r.get("result_id", "")
-        if pid.startswith("patent/"):
-            pid = pid.split("/")[1]
-        url = r.get("link") or (f"https://patents.google.com/patent/{pid}" if pid else "")
+        pid = string(r.get("patent_id")) or string(r.get("result_id"))
+        if not pid:
+            continue
+        url = string(r.get("patent_link")) or string(r.get("link"))
         codes = []
         for c in (r.get("patent_classifications") or r.get("classifications") or []):
             if len(codes) >= 3:
@@ -130,24 +132,26 @@ async def fetch_serpapi_patents(
                     codes.append(code)
             elif isinstance(c, str) and c:
                 codes.append(c)
-        raw_date = r.get("priority_date") or r.get("filing_date") or r.get("publication_date")
-        filing_year = int(str(raw_date)[:4]) if raw_date and str(raw_date)[:4].isdigit() else None
-        results.append({
+        text = string(r.get("snippet")) or string(r.get("title")) or ""
+        item = observation(provider="serpapi", record_id=pid, publication_id=string(r.get("publication_number")),
+            url=url, query=query, text=text, text_type="search_snippet" if string(r.get("snippet")) else "title_only",
+            jurisdiction=jurisdiction, language=string(r.get("language")),
+            dates={"priority":r.get("priority_date"),"filing":r.get("filing_date"),"publication":r.get("publication_date")})
+        results.append(with_evidence({
             "patent_id": pid,
             "title": r.get("title", ""),
             "abstract": r.get("snippet", ""),
-            "assignee": assignee,
+            "assignee": string(r.get("assignee")) or assignee,
             "url": url,
             "source": "serpapi",
             "classifications": codes,
-            "filing_year": filing_year,
-        })
+        }, [item]))
     return results
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 async def fetch_lens_patents(
-    query: str, client: httpx.AsyncClient, api_key: str = ""
+    query: str, client: httpx.AsyncClient, api_key: str = "", jurisdiction: str = "all"
 ) -> List[Dict[str, Any]]:
     """Fetch patents from Lens.org API (Bearer token required)."""
     headers = {
@@ -175,14 +179,17 @@ async def fetch_lens_patents(
     if not isinstance(data, dict) or data.get("error") or data.get("errors") or not isinstance(data.get("data"), list):
         raise ValueError("Lens response is missing patent results")
     for r in data["data"]:
-        lens_id = r.get("lens_id", "")
+        lens_id = string(r.get("lens_id"))
+        if not lens_id:
+            continue
         url = f"https://lens.org/lens/patent/{lens_id}" if lens_id else ""
 
         biblio = r.get("biblio") or {}
 
         # Title: biblio.invention_title is a list of {text, lang} dicts; prefer English
         title = ""
-        for t in (biblio.get("invention_title") or []):
+        titles = [t for t in (biblio.get("invention_title") or []) if isinstance(t, dict) and string(t.get("text"))]
+        for t in titles:
             if isinstance(t, dict):
                 if t.get("lang") == "en":
                     title = t.get("text", "")
@@ -207,20 +214,30 @@ async def fetch_lens_patents(
             if isinstance(item, dict) and item.get("symbol"):
                 ipc_codes.append(item["symbol"])
 
-        # Dates: priority > application filing > date_published
         priority_date = ((biblio.get("priority_claims") or {}).get("earliest_claim") or {}).get("date")
         filing_date = (biblio.get("application_reference") or {}).get("date")
-        raw_date = priority_date or filing_date or r.get("date_published")
-        filing_year = int(str(raw_date)[:4]) if raw_date and str(raw_date)[:4].isdigit() else None
-
-        results.append({
+        reference = biblio.get("publication_reference") or {}
+        components = [string(reference.get(k)) for k in ("jurisdiction", "doc_number", "kind")]
+        publication_id = "".join(components) if all(components) else None
+        raw_abstract = r.get("abstract")
+        variants = ([{"text": raw_abstract}] if isinstance(raw_abstract, str) else
+                    raw_abstract if isinstance(raw_abstract, list) else [])
+        variants = [v for v in variants if isinstance(v, dict) and string(v.get("text"))]
+        abstract = next((v["text"] for v in variants if v.get("lang") == "en"),
+                        variants[0]["text"] if variants else "")
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        observations = [observation(provider="lens", record_id=lens_id, publication_id=publication_id,
+            url=url or None, query=query, text=v["text"], text_type="abstract" if variants else "title_only",
+            language=string(v.get("lang")), jurisdiction=jurisdiction, retrieved_at=retrieved_at,
+            dates={"priority":priority_date,"filing":filing_date,"publication":r.get("date_published")})
+            for v in (variants or titles or [{"text":title}])]
+        results.append(with_evidence({
             "patent_id": lens_id,
             "title": title,
-            "abstract": r.get("abstract", ""),
+            "abstract": abstract,
             "assignee": assignee,
             "url": url,
             "source": "lens",
             "classifications": ipc_codes,
-            "filing_year": filing_year,
-        })
+        }, observations))
     return results

@@ -19,7 +19,8 @@ from test_saved_results import claim, state
 class DurableWorkerProcessTest(unittest.IsolatedAsyncioTestCase):
     setUpClass = classmethod(queue.DurableJobsSQLTest.setUpClass.__func__)
     rpc = queue.DurableJobsSQLTest.rpc
-    admit = queue.DurableJobsSQLTest.admit
+    def admit(self, **kwargs):
+        return queue.DurableJobsSQLTest.admit(self, version=2, **kwargs)
     expire = queue.DurableJobsSQLTest.expire
 
     def setUp(self):
@@ -125,6 +126,7 @@ class DurableWorkerProcessTest(unittest.IsolatedAsyncioTestCase):
             "1",
         )
         self.assertEqual(self.sql.run("SELECT count(*) FROM public.patents"), "1")
+        self.assertEqual(self.sql.run("SELECT evidence->'observations'->0->>'text' FROM public.patents"), "Evidence")
         self.assertEqual(
             self.sql.run("SELECT count(*) FROM public.usage_reservations"), "1"
         )

@@ -35,6 +35,11 @@ async def main():
             await asyncio.Event().wait()
         final = state()
         final["search_id"] = initial["search_id"]
+        import copy
+        final["deduped_patents"] = copy.deepcopy(final["deduped_patents"])
+        for patent in final["deduped_patents"]:
+            for observation in patent["evidence"]["observations"]:
+                observation["requested_jurisdiction"] = initial["jurisdiction"]
         return final
 
     async def get_db():

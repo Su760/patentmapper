@@ -21,6 +21,8 @@ from app.services.llm import create_chat_completion
 from app.services.usage import reserve_usage
 from app.services.jobs import admit_job, rpc
 
+from app.services.evidence import saved_evidence, validate_references, filter_claims
+
 logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_bearer), Depends(require_user)])
 
@@ -137,6 +139,25 @@ async def ideate_white_space(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/jobs/{search_id}/evidence")
+async def get_evidence(
+    search_id: UUID,
+    job: Dict[str, Any] = Depends(owned_job),
+    supabase: AsyncClient = Depends(get_supabase),
+) -> Dict[str, Any]:
+    """Owner-authorized saved data only. No provider calls, quota or regeneration."""
+    patents = (await supabase.table("patents").select("patent_id,title,abstract,assignee,url,evidence")
+               .eq("search_id", str(search_id)).execute()).data or []
+    results = (await supabase.table("search_results").select("clusters,citation_links,evidence_version,requested_jurisdiction,analysis_warnings")
+               .eq("search_id", str(search_id)).execute()).data or []
+    result = results[0] if results else {}
+    clusters, links, warnings = validate_references(result.get("clusters", []), result.get("citation_links", []), patents)
+    return {"patents": [saved_evidence(p) for p in patents], "clusters": clusters, "citation_links": links,
+            "evidence_version": result.get("evidence_version"),
+            "requested_jurisdiction": result.get("requested_jurisdiction"),
+            "warnings": list(dict.fromkeys((result.get("analysis_warnings") or []) + warnings))}
+
+
 @router.get("/jobs/{search_id}/analyze-claims")
 async def get_claims_analysis(
     search_id: UUID,
@@ -146,7 +167,19 @@ async def get_claims_analysis(
     """Return cached claims analysis if previously generated."""
     result = await supabase.table("search_results").select("claims_analysis").eq("search_id", str(search_id)).execute()
     row = result.data[0] if result.data else None
-    return {"claims": row.get("claims_analysis") if row else None}
+    cached = row.get("claims_analysis") if row else None
+    if cached is None:
+        return {"claims": None}
+    warnings = []
+    if isinstance(cached, dict):
+        if cached.get("version") != 1:
+            return {"claims": None, "warnings": ["Unsupported saved overlap version; no generation was requested."]}
+        warnings = cached.get("warnings", [])
+        cached = cached.get("claims", [])
+    patents = (await supabase.table("patents").select("patent_id,title").eq("search_id", str(search_id)).execute()).data or []
+    claims, excluded = filter_claims(cached, patents)
+    warnings = list(dict.fromkeys(warnings + excluded))
+    return {"claims": claims, **({"warnings": warnings} if warnings else {})}
 
 
 @router.post("/jobs/{search_id}/analyze-claims")
@@ -160,7 +193,7 @@ async def analyze_claims(
         raise HTTPException(409, "This analysis has no completed evidence for claims generation.")
     invention_idea = job["invention_idea"]
 
-    patents_res = await supabase.table("patents").select("patent_id, title, abstract").eq("search_id", str(search_id)).limit(8).execute()
+    patents_res = await supabase.table("patents").select("patent_id, title, abstract, evidence").eq("search_id", str(search_id)).limit(8).execute()
     patents = patents_res.data or []
     if not patents:
         raise HTTPException(status_code=404, detail="No patents found for this search")
@@ -169,24 +202,25 @@ async def analyze_claims(
 
     n = len(patents)
     patents_text = "\n".join(
-        f"{p['patent_id']} | {p['title']} | {(p.get('abstract') or '')[:300]}"
+        f"{p['patent_id']} | {p['title']} | Available text excerpt (source type may be unknown): {(p.get('abstract') or p.get('title') or '')[:300]}"
         for p in patents
     )
 
     prompt = (
         f"Invention: {invention_idea}\n\n"
-        f"Analyze these {n} patents for claim overlap with the invention. "
-        "For each patent, identify what specific technical aspects it likely claims "
-        "and whether those claims overlap with the invention.\n\n"
+        f"Analyze these {n} records for conceptual overlap with the invention. "
+        "This is AI inference from available abstracts, search snippets or title text; no patent claims were retrieved. "
+        "Describe inferred technical aspects, never quote invented claim language or assert legal scope. "
+        "Use only the supplied patent_id values.\n\n"
         "Return ONLY a JSON object:\n"
         "{\n"
         '  "claims": [\n'
         "    {\n"
         '      "patent_id": "US123...",\n'
         '      "title": "...",\n'
-        '      "likely_claims": ["Claim: a method for...", "Claim: a device comprising..."],\n'
+        '      "likely_claims": ["Inferred technical aspect..."],\n'
         '      "overlap_level": "high|medium|low|none",\n'
-        '      "overlap_explanation": "This patent likely claims X which directly covers Y in your invention...",\n'
+        '      "overlap_explanation": "The available text suggests a conceptual overlap in...",\n'
         '      "differentiators": "Your invention differs by..."\n'
         "    }\n"
         "  ]\n"
@@ -200,18 +234,18 @@ async def analyze_claims(
         response = await create_chat_completion(
             client,
             messages=[
-                {"role": "system", "content": "You are a senior patent attorney analyzing prior art."},
+                {"role": "system", "content": "You analyze conceptual overlap from limited text. All conclusions are AI inference, not retrieved claims or legal opinions."},
                 {"role": "user", "content": prompt},
             ],
             response_format={"type": "json_object"},
             max_tokens=1500,
         )
         result = json.loads(response.choices[0].message.content)
-        claims = result.get("claims", [])
+        claims, warnings = filter_claims(result.get("claims", []), patents)
 
-        await supabase.table("search_results").update({"claims_analysis": claims}).eq("search_id", str(search_id)).execute()
+        await supabase.table("search_results").update({"claims_analysis": {"version": 1, "claims": claims, "warnings": warnings}}).eq("search_id", str(search_id)).execute()
 
-        return {"claims": claims}
+        return {"claims": claims, **({"warnings": warnings} if warnings else {})}
     except Exception as e:
         logger.error("[analyze_claims] Groq error for search %s: %s", search_id, e)
         raise HTTPException(status_code=500, detail=str(e))

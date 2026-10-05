@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase";
-import { DEMO_JOB_ID, DEMO_IDEA, DEMO_CLAIMS } from "@/lib/demo";
+import { DEMO_JOB_ID, DEMO_IDEA, DEMO_CLAIMS, DEMO_EVIDENCE } from "@/lib/demo";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
@@ -179,7 +179,7 @@ export interface ClaimResult {
 export async function analyzeClaimsRequest(
   searchId: string,
   signal?: AbortSignal,
-): Promise<{ claims: ClaimResult[] }> {
+): Promise<{ claims: ClaimResult[]; warnings?: string[] }> {
   if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
     signal,
@@ -187,13 +187,13 @@ export async function analyzeClaimsRequest(
     headers: await authHeaders(undefined, signal),
   });
   await requireOK(res);
-  return res.json() as Promise<{ claims: ClaimResult[] }>;
+  return res.json() as Promise<{ claims: ClaimResult[]; warnings?: string[] }>;
 }
 
 export async function getClaimsAnalysis(
   searchId: string,
   signal?: AbortSignal,
-): Promise<{ claims: ClaimResult[] | null }> {
+): Promise<{ claims: ClaimResult[] | null; warnings?: string[] }> {
   if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
     headers: await authHeaders(undefined, signal),
@@ -201,7 +201,7 @@ export async function getClaimsAnalysis(
     signal,
   });
   await requireOK(res);
-  return res.json() as Promise<{ claims: ClaimResult[] | null }>;
+  return res.json() as Promise<{ claims: ClaimResult[] | null; warnings?: string[] }>;
 }
 
 export interface UsageStatus {
@@ -221,4 +221,48 @@ export async function getUsageStatus(): Promise<UsageStatus> {
   });
   await requireOK(res);
   return res.json() as Promise<UsageStatus>;
+}
+
+export interface EvidenceObservation {
+  provider: string;
+  provider_record_id: string;
+  publication_id: string | null;
+  source_url: string | null;
+  retrieved_at: string | null;
+  matching_queries: string[];
+  text: string;
+  text_type: "abstract" | "search_snippet" | "title_only" | "synthetic";
+  language: string | null;
+  dates: { priority: string | null; filing: string | null; publication: string | null };
+  requested_jurisdiction: string;
+  jurisdiction_filter: { country: string } | null;
+  coverage_limitations: string[];
+}
+export interface EvidencePatent {
+  patent_id: string;
+  title: string;
+  abstract?: string | null;
+  url?: string | null;
+  evidence_status: "available" | "legacy_unknown" | "unsupported_version";
+  evidence: { version: number; observations: EvidenceObservation[] } | null;
+}
+export interface EvidenceResponse {
+  patents: EvidencePatent[];
+  evidence_version: number | null;
+  requested_jurisdiction: string | null;
+  warnings: string[];
+  clusters: { theme_name: string; description: string; patent_ids: string[]; ipc_codes?: string[]; top_assignees?: { name: string; count: number }[] }[];
+  citation_links: { source: string; target: string; strength: number }[];
+}
+export async function getEvidence(jobId: string, signal?: AbortSignal): Promise<EvidenceResponse> {
+  if (jobId === DEMO_JOB_ID) return structuredClone(DEMO_EVIDENCE);
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/evidence`, {
+    headers: await authHeaders(undefined, signal), signal, cache: "no-store",
+  });
+  await requireOK(res);
+  const data = await res.json() as EvidenceResponse;
+  if (!Array.isArray(data.patents) || !Array.isArray(data.warnings) || !Array.isArray(data.clusters) || !Array.isArray(data.citation_links)) {
+    throw new Error("Saved evidence response is unavailable. Retry reads saved data only.");
+  }
+  return data;
 }

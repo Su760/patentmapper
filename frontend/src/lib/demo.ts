@@ -49,3 +49,20 @@ export const DEMO_CLAIMS = [
       "Sign in to run a private analysis. This sample is not patent evidence.",
   },
 ];
+
+export const DEMO_EVIDENCE: import("./api").EvidenceResponse = {
+  evidence_version: 1, requested_jurisdiction: "all", warnings: [],
+  clusters: DEMO_RESULTS.clusters, citation_links: [],
+  patents: [{
+    patent_id: "synthetic:DEMO-EXAMPLE", title: "Synthetic irrigation controller",
+    evidence_status: "available", evidence: { version: 1, observations: [{
+      provider: "synthetic", provider_record_id: "DEMO-EXAMPLE", publication_id: null,
+      source_url: null, retrieved_at: null, matching_queries: [],
+      text: "A synthetic irrigation controller uses local humidity readings to adjust watering schedules.",
+      text_type: "synthetic", language: "en",
+      dates: { priority: null, filing: null, publication: null },
+      requested_jurisdiction: "all", jurisdiction_filter: null,
+      coverage_limitations: ["Fixed synthetic demo; no patent retrieval or filtering was performed."],
+    }] },
+  }],
+};

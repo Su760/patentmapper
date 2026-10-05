@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.db import get_supabase
 from app.services.execution import execution
 from app.services.jobs import Lease, LostLease, rpc
+from app.services.evidence import validate_references
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ async def run_claim(db: AsyncClient, job: dict[str, Any]) -> None:
             await lease.call("publish_analysis")
             return
         options = job["execution_inputs"]
-        if options.get("version") != 1:
+        if options.get("version") != 2:
             await lease.call(
                 "fail_analysis",
                 p_error="Unsupported saved execution version. Operator action is required; no providers were called.",
@@ -48,7 +49,8 @@ async def run_claim(db: AsyncClient, job: dict[str, Any]) -> None:
                 errors=[],
                 citation_links=[],
                 retrieval_outcome="complete",
-                coverage_warnings=[]
+                coverage_warnings=[],
+                evidence_version=1, requested_jurisdiction=job["payload"]["jurisdiction"], analysis_warnings=[]
             )
             try:
                 final = await asyncio.wait_for(
@@ -67,6 +69,10 @@ async def run_claim(db: AsyncClient, job: dict[str, Any]) -> None:
                 return
             # If either response is uncertain, leave the durable state alone.
             # A lost checkpoint response must NEVER turn into failure/re-execution.
+            clusters, links, warnings = validate_references(final.get("clusters"), final.get("citation_links"), final["deduped_patents"])
+            final.update(clusters=clusters, citation_links=links, evidence_version=1,
+                         requested_jurisdiction=job["payload"]["jurisdiction"],
+                         analysis_warnings=list(dict.fromkeys(final.get("analysis_warnings", []) + warnings)))
             await lease.call(
                 "checkpoint_analysis",
                 p_output={
@@ -79,6 +85,7 @@ async def run_claim(db: AsyncClient, job: dict[str, Any]) -> None:
                             "citation_links",
                             "retrieval_outcome",
                             "coverage_warnings",
+                            "evidence_version", "requested_jurisdiction", "analysis_warnings",
                         )
                     },
                     "patents": final["deduped_patents"],

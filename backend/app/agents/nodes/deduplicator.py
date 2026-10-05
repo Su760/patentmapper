@@ -10,6 +10,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.services.execution import update_stage
+from app.services.evidence import deduplicate
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,7 @@ async def deduplicator_node(state: LandscapeState, supabase: AsyncClient) -> Dic
 
     await update_stage(supabase, state, "deduplicating")
 
-    seen: set = set()
-    deduped = []
-    for patent in raw:
-        pid = str(patent.get("patent_id") or "").strip()
-        usable_text = any(str(patent.get(key) or "").strip() for key in ("title", "abstract"))
-        if pid and usable_text and pid not in seen:
-            seen.add(pid)
-            deduped.append({**patent, "patent_id": pid})
+    deduped = deduplicate(raw)
 
     logger.info("[deduplicator] %d → %d patents after dedup", len(raw), len(deduped))
     if not deduped:

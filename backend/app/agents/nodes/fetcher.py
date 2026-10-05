@@ -14,6 +14,7 @@ from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
 from app.services.execution import update_stage, option
+from app.services.evidence import observation, with_evidence, COVERAGE_LIMIT
 from app.core.config import settings
 from app.services.patent_api import fetch_lens_patents, fetch_serpapi_patents
 
@@ -132,7 +133,13 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
 
     if option("mock_mode"):
         logger.info("[fetcher] mock mode — returning %d patents", len(MOCK_PATENTS))
-        return {"raw_patents": MOCK_PATENTS, "retrieval_outcome": "complete", "coverage_warnings": []}
+        patents = [with_evidence({**p, "url": None, "source": "synthetic", "filing_year": None}, [observation(
+            provider="synthetic", record_id=p["patent_id"], publication_id=None, url=None,
+            query="", text=p["abstract"], text_type="synthetic", jurisdiction=state.get("jurisdiction", "all"),
+            dates={})]) for p in MOCK_PATENTS]
+        return {"raw_patents": patents, "retrieval_outcome": "complete",
+                "coverage_warnings": ["Synthetic demo evidence; no patent retrieval was performed."],
+                "requested_jurisdiction": state.get("jurisdiction", "all"), "evidence_version": 1}
 
     queries = state["search_queries"]
     if not queries:
@@ -146,7 +153,7 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
         async with _SEMAPHORE:
             successes, failures = 0, 0
             try:
-                results = await fetch_lens_patents(query, client, api_key=settings.lens_api_key)
+                results = await fetch_lens_patents(query, client, api_key=settings.lens_api_key, jurisdiction=jurisdiction)
                 successes += 1
                 if results:
                     return results, successes, failures
@@ -170,6 +177,9 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
     failures = sum(failed for _, _, failed in outcomes)
     warnings = (["Some patent provider requests failed. Coverage is incomplete; conclusions use only the available results."]
                 if failures else [])
-    return {"raw_patents": raw_patents,
+    warnings.append(COVERAGE_LIMIT)
+    if jurisdiction != "all":
+        warnings.append("Lens requests do not apply the requested jurisdiction filter; SerpAPI fallback requests submit a country filter.")
+    return {"raw_patents": raw_patents, "evidence_version": 1, "requested_jurisdiction": jurisdiction,
             "retrieval_outcome": ("partial" if failures else "complete") if raw_patents else "insufficient_evidence",
             "coverage_warnings": warnings}

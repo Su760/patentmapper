@@ -156,6 +156,7 @@ psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020003_usage_snapshot.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610030001_saved_results.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610040001_durable_jobs.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610040002_evidence_workbench.sql
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema'"
 ```
 
@@ -265,6 +266,16 @@ Valid complete output is checkpointed before publication. `finalizing` jobs can 
 
 `WORKER_CONCURRENCY` bounds each process; all workers must share `WORKER_MAX_ACTIVE` for the global database claim cap. Configure timings in `.env.example`. Lease tokens fence stage/status/output writes; old RPC/direct service mutation bypasses are denied. Legacy owned `processing` jobs become interrupted during migration; ownerless legacy records remain untouched and hidden. Downgrading to the old background-task API is incompatible with these fences; roll forward without deleting queued inputs or saved output. See [M2b1 review](docs/milestone-2b1-review.md) for exact verification and migration/rollback details.
 
+## Saved evidence workbench (M3a)
+
+Saved results include an owner-only evidence workbench. Search/select records to inspect exact saved text, provider identity and record ID, supplied publication identifier, source URL, retrieval time, matching queries, separate priority/filing/publication dates, requested jurisdiction and actual submitted provider filter. Evidence reads and reopening use no paid calls. Synthetic demos are labeled; missing historical provenance stays unknown and is never regenerated.
+
+Lens abstracts and SerpAPI search snippets retain different text types. IDs used by analysis are provider-qualified record IDs, not publication numbers. Repeated observations survive deduplication; records from different providers remain separate even if they share a publication number. Counts describe retrieved records, not verified unique publications or patent families. Lens requests currently apply no jurisdiction filter; SerpAPI submits its supported country parameter. Coverage is limited, and filing-trend charts are suppressed.
+
+Clusters and conceptual relationships exclude structured IDs outside the saved evidence set with visible warnings. Relationships, reports, gaps and overlap analysis remain AI inference; no retrieved patent claim language or verified citation graph is claimed. Full text claims and a generated claim-to-quote matrix remain deferred.
+
+**Upgrade:** stop API/workers, apply only migration 6 (`202610040002_evidence_workbench.sql`) to an M2b database using the administrative migration role, then start the updated API and worker together. New execution inputs use version 2; queued v1 inputs are explicitly upgraded, running v1 inputs are interrupted without replay/refund, and finalizing v1 snapshots still publish provider-free as legacy evidence. Existing result evidence remains NULL. Do not run older application processes alongside the new schema or downgrade the application blindly. See [M3a review](docs/milestone-3a-review.md) for the contract, exact checks and limitations.
+
 ## Checks and local database regressions
 
 ```bash
@@ -291,7 +302,7 @@ Use your local administrative PostgreSQL user/credentials in the DSN when needed
 ## Deferred milestones
 
 - Further execution reliability: full stage replay, automatic paid retries/refunds and any broader recovery design. M2b1 admits durable jobs and recovers publication only; interrupted paid graphs remain interrupted.
-- Evidence workbench: sourced claim/citation evidence, provenance review, jurisdiction fidelity, and research workflows.
+- Further evidence work: sourced full claims/citations, a generated claim-to-quote matrix, new providers, broader jurisdiction filtering and research workflows.
 - Quality evaluation: labeled retrieval/analysis benchmarks and hallucination/citation checks.
 
 _Built with ❤️ for startup CTOs and inventors who deserve better than $10K/year enterprise tools._

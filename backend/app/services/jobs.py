@@ -27,7 +27,7 @@ async def admit_job(
                 "p_submission_key": str(key),
                 "p_payload": {"invention_idea": idea, "jurisdiction": jurisdiction},
                 "p_execution_inputs": {
-                    "version": 1,
+                    "version": 2,
                     "groq_model": settings.groq_model,
                     "mock_mode": settings.mock_mode,
                     "serpapi_enabled": settings.serpapi_enabled,

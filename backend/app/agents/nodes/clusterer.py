@@ -5,8 +5,9 @@ Out: clusters (3-5 thematic clusters)
 Real impl: pass top 50 abstracts to the configured Groq model for thematic grouping
 """
 import json
+from copy import deepcopy
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from groq import AsyncGroq
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -17,6 +18,7 @@ from app.agents.state import LandscapeState
 from app.services.execution import update_stage, option
 from app.core.config import settings
 from app.services.llm import create_chat_completion
+from app.services.evidence import validate_references
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +100,11 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
 
     if option("mock_mode"):
         logger.info("[clusterer] mock mode — returning %d clusters", len(MOCK_CLUSTERS))
-        return {"clusters": MOCK_CLUSTERS}
+        clusters = deepcopy(MOCK_CLUSTERS)
+        for cluster in clusters:
+            cluster["patent_ids"] = [f"synthetic:{pid}" for pid in cluster["patent_ids"]]
+        clusters, _, warnings = validate_references(clusters, [], state["deduped_patents"])
+        return {"clusters": clusters, "analysis_warnings": warnings}
 
     top_patents = state["deduped_patents"][:30]
     estimated = sum(
@@ -133,13 +139,7 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
         if p.get("patent_id")
     }
 
-    clusters = await _call_groq()
-
-    patent_year: Dict[str, Optional[int]] = {
-        p["patent_id"]: p.get("filing_year")
-        for p in state["deduped_patents"]
-        if p.get("patent_id")
-    }
+    clusters, _, warnings = validate_references(await _call_groq(), [], state["deduped_patents"])
 
     for cluster in clusters:
         if not isinstance(cluster.get("ipc_codes"), list):
@@ -157,16 +157,5 @@ async def clusterer_node(state: LandscapeState, supabase: AsyncClient) -> Dict[s
         ]
         cluster["top_assignees"] = [{"name": n, "count": c} for n, c in top]
 
-        year_counts: Dict[int, int] = {}
-        for pid in cluster.get("patent_ids", []):
-            year = patent_year.get(pid)
-            if year is not None:
-                year_counts[year] = year_counts.get(year, 0) + 1
-        trend = sorted(
-            [{"year": y, "count": c} for y, c in year_counts.items()],
-            key=lambda x: x["year"],
-        )
-        cluster["filing_trend"] = trend if len(trend) >= 2 else []
-
     logger.info("[clusterer] real mode — got %d clusters", len(clusters))
-    return {"clusters": clusters}
+    return {"clusters": clusters, "analysis_warnings": warnings}

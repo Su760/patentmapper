@@ -58,7 +58,7 @@ class SavedResultsSQLTest(unittest.TestCase):
         self.assertEqual(self.sql.run(self.query()), "t")
         self.assertEqual(self.sql.run("SELECT status FROM public.searches"), "completed")
         self.assertEqual(self.sql.run("SELECT error_message IS NULL FROM public.searches"), "t")
-        self.assertEqual(self.sql.run("SELECT patent_id FROM public.patents"), "US1")
+        self.assertEqual(self.sql.run("SELECT patent_id FROM public.patents"), PATENT["patent_id"])
         self.assertEqual(self.sql.run("SELECT claims_analysis FROM public.search_results"), "[]")
 
     def test_concurrent_finalizations_write_once(self):

@@ -106,7 +106,29 @@ never replay the paid graph automatically. Only checkpointed final output can re
 publication without providers. Service direct mutation bypasses are denied, except
 authorized cached claims updates. See `docs/milestone-2b1-review.md`.
 
-Full stage replay, automatic paid retries/refunds, new providers, evidence workbench,
+Full stage replay, automatic paid retries/refunds, new providers, claim-to-quote matrices,
 and quality evaluation remain deferred. Existing
 claims/citation relationships are inferred, not verified source evidence. See
 `docs/milestone-2a-review.md` and `tasks/todo.md`.
+
+## M3a persisted evidence
+
+Evidence v1 lives in `patents.evidence` as exact per-provider observations. Preserve provider
+record IDs separately from supplied publication identifiers; internal IDs are provider-qualified.
+Dedup merges observations only for the same provider record, never infers cross-provider identity.
+Search snippets, abstracts, title-only text and synthetic text have distinct types. Priority,
+filing and publication dates remain separate; no fallback filing years or unsupported trend charts.
+Lens jurisdiction filters are not applied; record that limitation. SerpAPI submits country filters.
+
+Migration 6 (`202610040002_evidence_workbench.sql`) preserves RLS/fences and atomically publishes
+saved evidence. Coordinate a stop of API/workers before applying it: queued execution v1 upgrades
+to v2, running v1 interrupts, finalizing v1 remains publishable as legacy output. New worker
+execution requires v2; unknown execution versions fail without graph/provider calls. Missing
+historical evidence stays NULL. Never backfill or regenerate it during a read. Future evidence
+versions are opaque to this reader. Keep v2 checkpoints evidence-versioned and validated.
+
+The owner-authorized GET `/api/jobs/{id}/evidence` and cached overlap reads are free and provider-free.
+Only validated saved record IDs may populate clusters/graph/overlap references. Exclusions must be
+visible and deterministic. Conceptual relationships and overlap wording are AI inference from
+limited available text, never retrieved patent claims. New overlap caches use a v1 envelope with
+claims and exclusion warnings; historical list caches remain readable. See the M3a review.

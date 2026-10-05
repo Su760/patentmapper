@@ -183,7 +183,7 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         lease_token = str(uuid4())
         self.sql(f"UPDATE public.searches SET status='running' WHERE id='{self.job}'; INSERT INTO public.analysis_queue(search_id,user_id,submission_key,payload,execution_inputs,state,lease_token,lease_expires_at) VALUES ('{self.job}','{self.users[0]}','{lease_token}','{{}}','{{}}','running','{lease_token}',clock_timestamp()+interval '60 seconds')")
         with patch("app.worker.build_graph", return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
-            await run_saved_graph(self.db,dict(search_id=self.job,lease_token=lease_token,state="running",payload=dict(invention_idea="Synthetic invention",jurisdiction="all"),execution_inputs=dict(version=1,mock_mode=True,serpapi_enabled=False,groq_model="fixture")))
+            await run_saved_graph(self.db,dict(search_id=self.job,lease_token=lease_token,state="running",payload=dict(invention_idea="Synthetic invention",jurisdiction="all"),execution_inputs=dict(version=2,mock_mode=True,serpapi_enabled=False,groq_model="fixture")))
         for token, visible in ((self.tokens[0],True),(self.tokens[1],False),(self.tokens[2],False),(self.cfg["ANON_KEY"],False)):
             r = await self.http.get(f"/rest/v1/search_results?search_id=eq.{self.job}",headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)})
             self.assertEqual(r.status_code,200)
@@ -192,11 +192,39 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(r.json()[0]["final_report"],REPORT)
                 self.assertEqual(r.json()[0]["white_space_analysis"],"Separate gaps")
                 self.assertEqual(r.json()[0]["coverage_warnings"],["Partial coverage fixture"])
+                evidence=await self.request("GET",f"/api/jobs/{self.job}/evidence",token)
+                self.assertEqual(evidence.json()["patents"][0]["evidence"],final["deduped_patents"][0]["evidence"])
         for _ in range(2):
             status=await self.request("GET",f"/api/jobs/{self.job}",self.tokens[0])
             self.assertEqual(status.json()["status"],"completed")
             cached=await self.request("GET",f"/api/jobs/{self.job}/analyze-claims",self.tokens[0])
             self.assertEqual(cached.json(),{"claims":[]})
+        self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),"0")
+        self.no_work()
+
+    async def test_saved_evidence_actual_auth_rls_and_zero_paid_calls(self):
+        from test_evidence_sql import evidence_output
+        from test_milestone1_sql import literal
+        evidence = evidence_output()["patents"][0]["evidence"]
+        self.sql(f"UPDATE public.patents SET evidence={literal(json.dumps(evidence))}::jsonb WHERE search_id='{self.job}'")
+        for _ in range(2):
+            r = await self.request("GET", f"/api/jobs/{self.job}/evidence", self.tokens[0])
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["patents"][0]["evidence"], evidence)
+        for token, expected in ((None,401),("invalid",401),(self.tokens[1],404),(self.tokens[2],404)):
+            r = await self.request("GET", f"/api/jobs/{self.job}/evidence", token)
+            self.assertEqual(r.status_code, expected)
+        for token, visible in ((self.tokens[0],True),(self.tokens[1],False),(self.cfg["ANON_KEY"],False)):
+            headers={"apikey":self.cfg["ANON_KEY"],**self.headers(token)}
+            r=await self.http.get(f"/rest/v1/patents?search_id=eq.{self.job}&select=evidence",headers=headers)
+            self.assertEqual(r.status_code,200)
+            self.assertEqual(bool(r.json()),visible)
+            r=await self.http.patch(f"/rest/v1/patents?search_id=eq.{self.job}",headers=headers,json={"evidence":None})
+            self.assertIn(r.status_code,(200,204,401,403))
+        self.assertEqual(json.loads(self.sql(f"SELECT evidence FROM public.patents WHERE search_id='{self.job}'")),evidence)
+        guest=await self.request("GET",f"/api/jobs/{self.guest_job}/evidence",self.tokens[2])
+        self.assertEqual(guest.status_code,200)
+        self.assertEqual(guest.json()["patents"][0]["evidence_status"],"legacy_unknown")
         self.assertEqual(self.sql(f"SELECT count(*) FROM public.usage_reservations WHERE user_id='{self.users[0]}'"),"0")
         self.no_work()
 
@@ -226,7 +254,11 @@ class SupabaseHTTPTest(unittest.IsolatedAsyncioTestCase):
         self.no_work()
         claimed=await rpc(self.db,'claim_analysis',{'p_lease_seconds':60,'p_max_active':1})
         self.assertEqual(claimed['search_id'],job)
-        final=state()
+        import copy
+        final=copy.deepcopy(state())
+        for patent in final["deduped_patents"]:
+            for observation in patent["evidence"]["observations"]:
+                observation["requested_jurisdiction"] = body["jurisdiction"]
         with patch('app.worker.build_graph',return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=final))):
             await run_saved_graph(self.db,claimed)
         self.assertEqual((await self.request('GET',f'/api/jobs/{job}',self.tokens[0])).json()['status'],'completed')
