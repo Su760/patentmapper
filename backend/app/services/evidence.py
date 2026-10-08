@@ -126,7 +126,12 @@ def filter_claims(claims: Any, patents: list[dict[str, Any]]) -> tuple[list, lis
     rows = claims
     for claim in rows:
         pid = claim.get('patent_id') if isinstance(claim, dict) else None
-        if not isinstance(pid, str) or pid not in allowed or pid in seen:
+        if (not isinstance(pid, str) or pid not in allowed or pid in seen
+                or not all(isinstance(claim.get(key), str) for key in
+                           ('title', 'overlap_explanation', 'differentiators'))
+                or not isinstance(claim.get('likely_claims'), list)
+                or not all(isinstance(item, str) for item in claim['likely_claims'])
+                or claim.get('overlap_level') not in ('high', 'medium', 'low', 'none')):
             continue
         seen.add(pid)
         clean.append({**claim, 'title': allowed[pid].get('title') or pid})

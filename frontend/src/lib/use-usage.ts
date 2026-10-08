@@ -10,21 +10,21 @@ export function useUsage() {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{
     token?: string;
+    attempt?: number;
     data?: UsageStatus;
     error?: string;
   }>({});
   useEffect(() => {
     let cancelled = false;
-    setState({});
     if (!loading && token) {
       getUsageStatus().then(
         (data) => {
-          if (!cancelled) setState({ token, data });
+          if (!cancelled) setState({ token, attempt, data });
         },
         (error) => {
           if (!cancelled)
             setState({
-              token,
+              token, attempt,
               error:
                 error instanceof Error
                   ? error.message
@@ -37,7 +37,7 @@ export function useUsage() {
       cancelled = true;
     };
   }, [token, loading, attempt]);
-  const current = !loading && token && state.token === token ? state : {};
+  const current = !loading && token && state.token === token && state.attempt === attempt ? state : {};
   return {
     ...current,
     signedIn: !!token,

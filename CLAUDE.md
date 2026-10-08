@@ -2,7 +2,7 @@
 
 ## Current implementation
 
-Keep the existing stack: Next.js 14 App Router / TypeScript / Tailwind, FastAPI
+Keep the existing stack: Next.js 16 App Router / TypeScript / Tailwind, FastAPI
 plus a separate durable-job worker, a six-node LangGraph DAG, configurable Groq completions,
 Lens.org with SerpAPI fallback, and Supabase Postgres/Auth. Stripe provides checkout
 and subscription webhooks. Auth uses magic links; Google OAuth is not implemented.
@@ -132,3 +132,19 @@ Only validated saved record IDs may populate clusters/graph/overlap references. 
 visible and deterministic. Conceptual relationships and overlap wording are AI inference from
 limited available text, never retrieved patent claims. New overlap caches use a v1 envelope with
 claims and exclusion warnings; historical list caches remain readable. See the M3a review.
+
+
+## Release hardening
+
+Overlap rows require string IDs/title/explanation/differentiators, a string array
+of inferred aspects and a high/medium/low/none enum. Malformed rows and cache warning
+envelopes are excluded with visible warnings; valid legacy lists stay free/read-only.
+The client also validates response JSON before rendering. Never auto-regenerate.
+
+Use Node 22 LTS, `npm ci` and an explicit `npm run lint`; Next 16 does not lint during
+build. Async page params and React 19 ref initialization are required. Account-keyed
+home/dashboard state must retain unmount cancellation, owner-scoped idempotency and
+private data clearing; usage results remain token/attempt-scoped. No cache opt-in
+for private reads. Keep the cookie override scoped to the existing SSR package to
+preserve its session format, and retain raw/chunked-cookie/sign-out regressions.
+See `docs/release-hardening-review.md` for dependency limitations and verification.

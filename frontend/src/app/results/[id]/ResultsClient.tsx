@@ -781,6 +781,7 @@ function NodeSidePanel({
   return (
     <div
       ref={panelRef}
+      className="pm-node-panel"
       style={{
         position: "fixed",
         right: 16,
@@ -1011,7 +1012,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   const lifecycle = useRef<AbortController | null>(null);
   const epoch = useRef(0);
   const claimsPending = useRef(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout>>();
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const claimsSectionRef = useRef<HTMLElement | null>(null);
 
   const loadEvidence = useCallback(async (signal: AbortSignal, version: number) => {
@@ -1053,7 +1054,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
         const { claims, warnings } = await getClaimsAnalysis(jobId, controller.signal);
         if (!current() || signal.aborted) return;
         setClaimsAnalysis(claims);
-        setClaimsWarnings(warnings ?? []);
+      setClaimsWarnings(warnings ?? []);
         setClaimsCacheReady(true);
       } catch (error) {
         if (!current() || signal.aborted) return;
@@ -1119,7 +1120,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       );
       if (scope !== accessScope.current || version !== epoch.current) return;
       setClaimsAnalysis(claims);
-        setClaimsWarnings(warnings ?? []);
+      setClaimsWarnings(warnings ?? []);
     } catch (e) {
       if (scope === accessScope.current && version === epoch.current)
         setClaimsError(e instanceof Error ? e.message : "Analysis failed");
@@ -1454,7 +1455,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             <Link href="/">Start a fresh analysis</Link> to continue; it consumes
             a new analysis allowance.
           </p>}
-          <a href="/auth">Sign in</a> · <a href="/">New analysis</a>
+          <a href="/auth">Sign in</a> · <Link href="/">New analysis</Link>
         </div>
       </main>
     );
@@ -1777,9 +1778,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           {!claimsCacheReady ? (
             <>
               {!claimsError && <p>Loading saved claims...</p>}
-              {claimsWarnings.map((warning, index) => <p role="status" key={index}>{warning}</p>)}
-          <p>AI inference from available abstracts, search snippets or titles. No patent claim language was retrieved. Older saved wording also remains unverified model inference.</p>
-          {claimsError && (
+              {claimsError && (
                 <button className="pm-btn" onClick={retryCachedClaims}>
                   Retry saved claims
                 </button>
@@ -1841,9 +1840,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           alignItems: "center",
         }}
       >
-        <a href="/" className="pm-btn">
+        <Link href="/" className="pm-btn">
           + New Analysis
-        </a>
+        </Link>
         <a
           href="/dashboard"
           style={{

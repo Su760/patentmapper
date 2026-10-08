@@ -1,5 +1,7 @@
 # M3a — persisted evidence provenance and read-only workbench
 
+Historical M3a handoff at `6ca6e0a`. The subsequent [release-hardening review](release-hardening-review.md) records overlap shape validation, the framework upgrade, full-page mobile fixes, integrated synthetic execution and deployment diagnostics. The original evidence below is retained as historical evidence.
+
 Base/remote verified at `85fc0f1df64efe3a2bc008e7362ddf94aa38e8e5` on `milestone-2b-durable-jobs`. Isolated branch: `milestone-3a-evidence-workbench`, worktree `/tmp/patentmapper-m3a`. All 86 files in the original dirty main SHA-256 preservation snapshot remain unchanged; that checkout is excluded from this branch. The approved plan/file boundary is recorded at the top of `tasks/todo.md`.
 
 ## Behavior and evidence contract

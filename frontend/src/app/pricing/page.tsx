@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { createCheckoutSession } from "@/lib/api";
 
@@ -152,7 +153,7 @@ export default function PricingPage() {
               </li>
             ))}
           </ul>
-          <a
+          <Link
             href="/"
             className="pm-btn"
             style={{
@@ -163,7 +164,7 @@ export default function PricingPage() {
             }}
           >
             Get started free →
-          </a>
+          </Link>
         </div>
 
         {/* Pro card */}

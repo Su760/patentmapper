@@ -77,6 +77,12 @@ jobs:
       - name: Real Auth and PostgREST with mocked paid providers
         working-directory: backend
         run: MILESTONE1_SUPABASE_CONFIG="$RUNNER_TEMP/patentmapper-m1-http/test-config.json" python -m unittest discover -s tests -p test_supabase_http.py -v
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Integrated synthetic browser, API, separate worker and saved results
+        run: python backend/tests/run_integrated.py "$RUNNER_TEMP/patentmapper-m1-http/test-config.json" "$RUNNER_TEMP/patentmapper-integrated"
       - name: Stop disposable Supabase
         if: always()
         run: npx --yes supabase@2.119.0 stop --workdir "$RUNNER_TEMP/patentmapper-m1-http" --no-backup

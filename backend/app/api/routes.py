@@ -172,10 +172,14 @@ async def get_claims_analysis(
         return {"claims": None}
     warnings = []
     if isinstance(cached, dict):
-        if cached.get("version") != 1:
+        if type(cached.get("version")) is not int or cached["version"] != 1:
             return {"claims": None, "warnings": ["Unsupported saved overlap version; no generation was requested."]}
-        warnings = cached.get("warnings", [])
-        cached = cached.get("claims", [])
+        saved_warnings = cached.get("warnings", [])
+        if isinstance(saved_warnings, list):
+            warnings = [warning for warning in saved_warnings if isinstance(warning, str)]
+        if not isinstance(saved_warnings, list) or len(warnings) != len(saved_warnings):
+            warnings.append("Excluded malformed saved overlap warnings.")
+        cached = cached.get("claims")
     patents = (await supabase.table("patents").select("patent_id,title").eq("search_id", str(search_id)).execute()).data or []
     claims, excluded = filter_claims(cached, patents)
     warnings = list(dict.fromkeys(warnings + excluded))
@@ -241,7 +245,7 @@ async def analyze_claims(
             max_tokens=1500,
         )
         result = json.loads(response.choices[0].message.content)
-        claims, warnings = filter_claims(result.get("claims", []), patents)
+        claims, warnings = filter_claims(result.get("claims") if isinstance(result, dict) else None, patents)
 
         await supabase.table("search_results").update({"claims_analysis": {"version": 1, "claims": claims, "warnings": warnings}}).eq("search_id", str(search_id)).execute()
 

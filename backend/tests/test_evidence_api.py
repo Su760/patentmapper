@@ -1,5 +1,7 @@
 """Owner-only saved evidence reads and overlap reference validation."""
 import unittest
+import json
+from test_overlap_validation import VALID
 from unittest.mock import AsyncMock
 from types import SimpleNamespace
 import test_private_analyses as security
@@ -36,7 +38,7 @@ class EvidenceAPITest(unittest.IsolatedAsyncioTestCase):
         self.model.assert_not_awaited()
 
     async def test_overlap_unknown_ids_filtered_and_visible_on_reopen(self):
-        self.model.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"claims":[{"patent_id":"ghost"},{"patent_id":"fixture","title":"Invented title"}]}'))])
+        self.model.return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"claims":[{"patent_id":"ghost"}, VALID]})))])
         r=await self.request('POST',f'/api/jobs/{security.JOB}/analyze-claims')
         self.assertEqual(r.status_code,200)
         self.assertEqual([c['patent_id'] for c in r.json()['claims']],['fixture'])
@@ -44,7 +46,7 @@ class EvidenceAPITest(unittest.IsolatedAsyncioTestCase):
         prompt=self.model.call_args.kwargs['messages'][1]['content']
         self.assertIn('inference',prompt)
         # Store raw response so free reads also protect old cached model output.
-        self.db.rows['search_results'][0]['claims_analysis']=[{'patent_id':'ghost'},{'patent_id':'fixture'}]
+        self.db.rows['search_results'][0]['claims_analysis']=[{'patent_id':'ghost'}, VALID]
         cached=await self.request('GET',f'/api/jobs/{security.JOB}/analyze-claims')
         self.assertEqual([c['patent_id'] for c in cached.json()['claims']],['fixture'])
         self.assertTrue(cached.json()['warnings'])

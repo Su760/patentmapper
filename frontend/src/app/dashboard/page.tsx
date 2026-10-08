@@ -104,14 +104,23 @@ function StatusBadge({ status }: { status: DashboardItem["status"] }) {
 }
 
 function DashboardContent() {
+  const { user, loading } = useAuth();
+  const params = useSearchParams();
+  return <DashboardOwner key={`${loading}:${user?.id ?? "signed-out"}:${params.get("upgraded")}`} />;
+}
+
+function DashboardOwner() {
   const searchParams = useSearchParams();
   const usage = useUsage();
   const [historyError, setHistoryError] = useState<string | null>(null);
   const { user, loading: authLoading } = useAuth();
-  const [storedItems, setItems] = useState<DashboardItem[]>([]);
-  const [itemsOwner, setItemsOwner] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [showBanner, setShowBanner] = useState(false);
+  const [storedItems, setItems] = useState<DashboardItem[]>(() => user ? [] : [{
+    id: DEMO_JOB_ID, status: "completed", current_step: "done", error_message: null,
+    inventionIdea: DEMO_META.invention_idea, created_at: DEMO_META.created_at,
+  }]);
+  const [itemsOwner] = useState(user?.id ?? null);
+  const [loading, setLoading] = useState(authLoading || !!user);
+  const [showBanner, setShowBanner] = useState(searchParams.get("upgraded") === "true");
   const [filter, setFilter] = useState<
     "all" | "completed" | "queued" | "running" | "finalizing" | "interrupted" | "failed"
   >("all");
@@ -119,7 +128,6 @@ function DashboardContent() {
 
   useEffect(() => {
     if (searchParams.get("upgraded") === "true") {
-      setShowBanner(true);
       const t = setTimeout(() => setShowBanner(false), 5000);
       return () => clearTimeout(t);
     }
@@ -130,10 +138,6 @@ function DashboardContent() {
 
     let cancelled = false;
     const stopPollers: (() => void)[] = [];
-    setItems([]);
-    setLoading(true);
-    setHistoryError(null);
-    setItemsOwner(user?.id ?? null);
     const client = createClient();
 
     if (user) {
@@ -154,6 +158,7 @@ function DashboardContent() {
             setLoading(false);
             return;
           }
+          setHistoryError(null);
           setItems(
             (data ?? []).map((row) => ({
               id: row.id as string,
@@ -183,19 +188,6 @@ function DashboardContent() {
             }));
           }
         });
-    } else {
-      // localStorage job UUIDs do not authorize access to legacy/private searches.
-      setItems([
-        {
-          id: DEMO_JOB_ID,
-          status: "completed",
-          current_step: "done",
-          error_message: null,
-          inventionIdea: DEMO_META.invention_idea,
-          created_at: DEMO_META.created_at,
-        },
-      ]);
-      setLoading(false);
     }
     return () => {
       cancelled = true;

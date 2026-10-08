@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-4A90E2?style=flat-square)](https://github.com/langchain-ai/langgraph)
 [![Supabase](https://img.shields.io/badge/Supabase-postgres-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com)
 [![Stripe](https://img.shields.io/badge/Stripe-billing-635BFF?style=flat-square&logo=stripe&logoColor=white)](https://stripe.com)
@@ -103,7 +103,7 @@ User Input (plain-English invention description)
 
 | Layer                      | Technology                                                       |
 | -------------------------- | ---------------------------------------------------------------- |
-| **Frontend**               | Next.js 14 App Router, TypeScript (strict), Tailwind CSS         |
+| **Frontend**               | Next.js 16.4 App Router, TypeScript (strict), Tailwind CSS         |
 | **Backend**                | FastAPI (fully async), Python 3.13, Pydantic v2                  |
 | **Agent framework**        | LangGraph — strict DAG, 6 nodes, typed `LandscapeState`          |
 | **LLM**                    | Groq — GPT-OSS 120B by default (configurable via `GROQ_MODEL`)   |
@@ -123,7 +123,7 @@ User Input (plain-English invention description)
 ### Prerequisites
 
 - Python 3.11–3.13 (pinned dependencies do not currently support Python 3.14)
-- Node.js 18+
+- Node.js 22 LTS (22.14 or newer within 22.x; use the current patched 22.x release)
 - A [Supabase](https://supabase.com) project (free tier works)
 - At least one LLM key: [Groq](https://console.groq.com) (free tier, fast)
 - Patent APIs: a valid Lens.org bearer token; SerpAPI fallback if enabled
@@ -147,7 +147,7 @@ cp ../.env.example ../.env
 # Edit .env — at minimum set GROQ_API_KEY + the three SUPABASE vars
 ```
 
-Stop old API/background processes before applying migration 5. Apply the checked-in migrations to a **development/test Supabase project** before starting the updated API and separate worker. Review existing policies first: migration 1 replaces policies on searches, results, patents, and subscriptions with owner-only reads and server-only writes.
+Stop API and worker processes before applying migrations 5 and 6. Apply the checked-in migrations to a **development/test Supabase project** before starting the updated API and separate worker. Review existing policies first: migration 1 replaces policies on searches, results, patents, and subscriptions with owner-only reads and server-only writes.
 
 ```bash
 # Run from the repository root, with a development database URL set externally.
@@ -160,13 +160,13 @@ psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/
 psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema'"
 ```
 
-Alternatively, execute those five files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
+Alternatively, execute those six files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
 
 ### 3. Frontend setup
 
 ```bash
 cd frontend
-npm install
+npm ci
 
 cat > .env.local <<EOF
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -310,3 +310,45 @@ _Built with ❤️ for startup CTOs and inventors who deserve better than $10K/y
 Closure review, exact local Auth/PostgREST setup, browser checks, accounting policy, and publication evidence: [Milestone 1 review](docs/milestone-1-review.md).
 
 M2a behavior, exact disposable database/browser commands, test evidence, and remaining limits: [Milestone 2a review](docs/milestone-2a-review.md).
+
+
+## Release hardening on M3a
+
+The frontend uses stable Next.js 16.4.0 (Active LTS) and React 19.3.0. Install the
+committed lockfile with `npm ci`; lint is an explicit `npm run lint` step because
+Next 16 builds no longer run lint. Runtime dependency advisories, retained tooling
+limitations and exact verification are in [the release review](docs/release-hardening-review.md).
+
+Generated overlap and saved caches validate every record field. Invalid records
+are omitted with visible warnings, without inventing replacement text. Valid legacy
+list caches remain readable; loading, refresh and read retries never generate paid
+results. The results toolbar/cards wrap on mobile and keep actions reachable.
+
+This hardening adds **no migration**. Apply the six cumulative migrations above in
+filename order for a new installation. An existing M3a database needs no schema
+change. Keep the API and the **separate durable worker** running; a frontend-only
+Vercel deployment does not execute queued jobs. See the review for coordinated
+migration/recovery requirements and the unresolved Vercel log-access blocker.
+
+A reproducible synthetic integrated check uses real browser/API/worker/Auth/PostgREST
+and only a disposable local database. No provider credentials are required:
+
+```bash
+python supabase/tests/local_http_setup.py /tmp/patentmapper-release-http
+MILESTONE1_DISPOSABLE_SUPABASE=1 python backend/tests/run_integrated.py \
+  /tmp/patentmapper-release-http/test-config.json /tmp/patentmapper-release-flow
+```
+
+Run from the repository root with backend dependencies, Node 22, Docker, `psql`,
+frontend `npm ci` and Playwright Chromium installed. Both temporary paths must be
+new; generated credentials remain outside git. The runner builds the frontend with
+local public settings, starts/stops its API and worker subprocesses, and tests
+publication, refresh, evidence reopening, one-reservation accounting and account
+isolation. It blocks non-loopback API/worker network connections. Browser fonts are
+blocked too. Stop the disposable stack afterward:
+
+```bash
+npx --yes supabase@2.119.0 stop --workdir /tmp/patentmapper-release-http --no-backup
+```
+
+Rebuild with your intended public settings before using a different environment.

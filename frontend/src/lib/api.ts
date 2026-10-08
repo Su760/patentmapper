@@ -176,6 +176,39 @@ export interface ClaimResult {
   differentiators: string;
 }
 
+function parseClaimsResponse(value: unknown, saved: boolean): { claims: ClaimResult[] | null; warnings: string[] } {
+  const data = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const warnings: string[] = [];
+  if (data.warnings !== undefined) {
+    if (Array.isArray(data.warnings)) {
+      warnings.push(...data.warnings.filter((item): item is string => typeof item === "string"));
+    }
+    if (!Array.isArray(data.warnings) || warnings.length !== data.warnings.length) {
+      warnings.push("Excluded malformed overlap warnings.");
+    }
+  }
+  if (saved && data.claims === null) return { claims: null, warnings };
+  if (!Array.isArray(data.claims)) {
+    return { claims: [], warnings: [...warnings, "Excluded malformed overlap response; no replacement was generated."] };
+  }
+  const seen = new Set<string>();
+  const claims = data.claims.filter((item: unknown): item is ClaimResult => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Record<string, unknown>;
+    if (typeof row.patent_id !== "string" || !row.patent_id || seen.has(row.patent_id)
+      || typeof row.title !== "string" || typeof row.overlap_explanation !== "string"
+      || typeof row.differentiators !== "string" || !Array.isArray(row.likely_claims)
+      || !row.likely_claims.every((text: unknown) => typeof text === "string")
+      || !["high", "medium", "low", "none"].includes(row.overlap_level as string)) return false;
+    seen.add(row.patent_id);
+    return true;
+  });
+  const excluded = data.claims.length - claims.length;
+  if (excluded) warnings.push(`Excluded ${excluded} duplicate or malformed overlap records; no replacement was generated.`);
+  return { claims, warnings: Array.from(new Set(warnings)) };
+}
+
 export async function analyzeClaimsRequest(
   searchId: string,
   signal?: AbortSignal,
@@ -187,7 +220,8 @@ export async function analyzeClaimsRequest(
     headers: await authHeaders(undefined, signal),
   });
   await requireOK(res);
-  return res.json() as Promise<{ claims: ClaimResult[]; warnings?: string[] }>;
+  const parsed = parseClaimsResponse(await res.json(), false);
+  return { ...parsed, claims: parsed.claims ?? [] };
 }
 
 export async function getClaimsAnalysis(
@@ -201,7 +235,7 @@ export async function getClaimsAnalysis(
     signal,
   });
   await requireOK(res);
-  return res.json() as Promise<{ claims: ClaimResult[] | null; warnings?: string[] }>;
+  return parseClaimsResponse(await res.json(), true);
 }
 
 export interface UsageStatus {

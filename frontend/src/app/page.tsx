@@ -37,31 +37,27 @@ function saveJobId(jobId: string): void {
 }
 
 export default function Home() {
+  const { session, loading } = useAuth();
+  return <HomeContent key={loading ? "loading" : session?.user.id ?? "signed-out"} />;
+}
+
+function HomeContent() {
   const router = useRouter();
   const { session, loading: authLoading } = useAuth();
-  const [inventionText, setInventionText] = useState("");
-  const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>("all");
+  const owner = session?.user.id;
+  const [previous] = useState(() => owner ? pendingSubmission(owner) : null);
+  const [inventionText, setInventionText] = useState(previous?.invention ?? "");
+  const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>((previous?.jurisdiction as JurisdictionValue) ?? "all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showLimitModal, setShowLimitModal] = useState(false);
 
-  const owner = session?.user.id;
-  const ownerRef = useRef(owner);
-  ownerRef.current = owner;
   const requestRef = useRef<AbortController | null>(null);
-  const [uncertain, setUncertain] = useState(false);
-  useEffect(() => {
+  const [uncertain, setUncertain] = useState(!!previous);
+  useEffect(() => () => {
     requestRef.current?.abort();
     requestRef.current = null;
-    setIsLoading(false);
-    setError(null);
-    setShowLimitModal(false);
-    const previous = owner ? pendingSubmission(owner) : null;
-    setInventionText(previous?.invention ?? "");
-    setJurisdiction((previous?.jurisdiction as JurisdictionValue) ?? "all");
-    setUncertain(!!previous);
-    return () => requestRef.current?.abort();
-  }, [owner]);
+  }, []);
 
   const charCount = inventionText.length;
   const isTooShort = charCount > 0 && charCount < MIN_CHARS;
@@ -82,7 +78,7 @@ export default function Home() {
     const controller = new AbortController();
     requestRef.current = controller;
     const timeout = setTimeout(() => controller.abort(), RESULTS_POLLING.timeoutMs);
-    const current = () => ownerRef.current === submittedOwner && requestRef.current === controller;
+    const current = () => requestRef.current === controller;
     setIsLoading(true);
     setError(null);
 

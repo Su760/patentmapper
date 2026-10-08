@@ -1,9 +1,10 @@
 import ResultsClient from "./ResultsClient";
 
 interface ResultsPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
-export default function ResultsPage({ params }: ResultsPageProps) {
+export default async function ResultsPage(props: ResultsPageProps) {
+  const params = await props.params;
   return <ResultsClient jobId={params.id} />;
 }
