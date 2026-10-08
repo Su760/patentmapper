@@ -13,8 +13,8 @@ Local and remote `milestone-3a-evidence-workbench` matched
 The original dirty `main` remains at `92b9580`; work and tests ran in the isolated
 worktree. An outside-git SHA-256 snapshot covers 87 original tracked/untracked files.
 The final comparison found 86 byte-identical files and no new files; the original
-generated `frontend/tsconfig.tsbuildinfo` is now missing. Its removal is unattributed
-(possible external disk cleanup); it was left untouched, not reconstructed over
+generated `frontend/tsconfig.tsbuildinfo` is now missing. Its removal is unattributed;
+it was left untouched, not reconstructed over
 concurrent work. The existing M3a worktree was not changed.
 The approved plan and amended file boundary are in `tasks/todo.md`.
 
@@ -226,6 +226,22 @@ confirmed repository cause for this deployment failure. No root-directory, accou
 project, billing or deployment settings were guessed or changed. Access to the
 owning Vercel scope or exported build logs is needed to diagnose it. Local build
 success is not evidence that this hosted failure is resolved.
+
+The release implementation commit `c864002` was pushed and
+[draft PR #1](https://github.com/Su760/patentmapper/pull/1) targets `main`. Its Vercel
+deployment `dpl_nMUyJXZwhAaobcCCFsYvNiYRtufY` also failed. Both read-only inspection
+commands were repeated for that exact deployment and returned the same default
+context/not-found and explicit-scope/nonexistent errors. The blocker therefore
+also applies to the new branch, with no accessible build log or confirmed cause.
+Final-commit GitHub Actions and deployment status are linked in the PR body so they
+can identify the actual final documentation commit without a self-referential hash.
+
+Both GitHub jobs (`milestone1`, `auth-postgrest`) passed at implementation commit
+`c864002ecd57717bb13945945b219706d302289c` in
+[run 37828185542](https://github.com/Su760/patentmapper/actions/runs/37828185542).
+This includes the new integrated browser/API/separate-worker check. The final
+documentation commit is checked again before handoff; its exact SHA, run links and
+Vercel status are recorded in PR #1 rather than inferred from this earlier success.
 
 ## Migration and runtime handoff
 

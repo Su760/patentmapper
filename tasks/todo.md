@@ -17,12 +17,14 @@
 - [x] Reproduce/fix toolbar overflow and duplicate notice; verify entire results page, long content and usable actions at 320/390/desktop with browser regressions and screenshots.
 - [x] Run complete existing backend/SQL/Auth/browser checks plus local browser → API → separate worker → disposable database → saved result flow, refresh/reopen/account isolation; no paid calls.
 - [x] Inspect available Vercel failure logs read-only; fix only confirmed in-scope repository causes or record exact access blocker. Obtain independent read-only review and fix confirmed findings with regressions.
-- [ ] Update cumulative release/migration/worker handoff with exact checks/limitations; verify preservation/boundary/secrets, commit/push, create draft PR targeting main, inspect final-commit CI.
+- [x] Update cumulative release/migration/worker handoff with exact checks/limitations; verify preservation/boundary/secrets, commit/push, create draft PR targeting main and inspect hosted implementation CI. Record the final documentation commit's CI status in the PR handoff.
 
 
 **Final local evidence:** 94 backend tests passed with zero skips; 42 frontend checks (35 Chromium + 7 Node) passed; real integrated browser/API/separate-worker/disposable-Auth/PostgREST publication, refresh, reopening and isolation passed. Next 16.4.0 / React 19.3.0 production build, lint, typecheck and clean install pass. Production audit: 0; full audit: 9 development entries (7 high/2 moderate). Independent review finding (dashboard stale error after same-owner token refresh) fixed with a red/green browser regression. Exact commands, screenshots, limits and Vercel log-access errors are in `docs/release-hardening-review.md`.
 
 **Preservation check:** Original main remains at `92b9580`; 86 of 87 snapshotted files are byte-identical, no new files. The generated `frontend/tsconfig.tsbuildinfo` is now missing from the original tree; attribution is unconfirmed and the file is left untouched. No source or unrelated user changes were overwritten. Asked whether this was part of external disk cleanup; publication work continues independently.
+
+**Publication:** Implementation `c864002ecd57717bb13945945b219706d302289c` pushed on `release-hardening-m3a`; [draft PR #1](https://github.com/Su760/patentmapper/pull/1) targets `main` and explains cumulative M1–M3a, migration order and the separate worker. Both GitHub jobs passed in [run 37828185542](https://github.com/Su760/patentmapper/actions/runs/37828185542), including the integrated synthetic flow. The new Vercel deployment failed with the same confirmed log-access blocker. Final documentation commit CI is checked separately and recorded in the PR, not inferred from the implementation run. No merge, manual deployment, production migration or paid call.
 
 
 ## M3a: persisted evidence and read-only workbench (2026-10-04)
