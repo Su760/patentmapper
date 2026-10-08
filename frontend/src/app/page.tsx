@@ -179,6 +179,7 @@ function HomeContent() {
                       type="button"
                       className={`pm-jur${jurisdiction === value ? " active" : ""}`}
                       onClick={() => setJurisdiction(value)}
+                      disabled={authLoading}
                     >
                       {label}
                     </button>
@@ -193,8 +194,8 @@ function HomeContent() {
                 onChange={(e) => setInventionText(e.target.value)}
                 maxLength={MAX_CHARS}
                 rows={7}
-                placeholder="A microfluidic device that separates exosomes from whole blood using acoustic..."
-                disabled={isLoading}
+                placeholder={authLoading ? "Checking your session..." : "A microfluidic device that separates exosomes from whole blood using acoustic..."}
+                disabled={authLoading || isLoading}
               />
 
               {isTooShort && (

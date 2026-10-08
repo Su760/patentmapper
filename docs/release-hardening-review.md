@@ -123,7 +123,7 @@ peer bypass, Next downgrade or warning suppression was used.
 | Check | Local result |
 | --- | --- |
 | Complete backend suite with real SQL and Auth/PostgREST enabled | **94 passed, zero skips** |
-| Existing and new frontend regressions | **42 passed: 35 Chromium + 7 Node** |
+| Existing and new frontend regressions | **43 passed: 36 Chromium + 7 Node** |
 | Separate integrated synthetic browser/API/worker/database flow | **1 passed** |
 | Clean `npm ci`, lint, TypeScript, production build, dependency tree | Passed; lint retains one existing font warning |
 | Long-content full page at 320, 390 and 1280px | Every visible HTML element and document width fit; screenshots inspected |
@@ -152,7 +152,7 @@ npx playwright test --config playwright.config.cjs
 # Real integrated run, from the repository root:
 PATH=/opt/homebrew/opt/postgresql@18/bin:$PATH MILESTONE1_DISPOSABLE_SUPABASE=1 \
   /tmp/pm-m2b-py311/bin/python backend/tests/run_integrated.py \
-  /tmp/pm-release-http/test-config.json /tmp/pm-release-integrated-final
+  /tmp/pm-release-http/test-config.json /tmp/pm-release-integrated-auth-final
 ```
 
 The disposable stack was created with
@@ -164,9 +164,9 @@ processes, with `MOCK_MODE=true`, blank paid keys and a test-only network guard.
 Browser traffic reaches real Auth, PostgREST and API endpoints; no route mocking is
 used in this integrated test. Model/retrieval output remains synthetic.
 
-Final integrated evidence: job `305221d9-a067-405a-a6aa-0dc4debbcee5`, ten saved
+Final integrated evidence: job `4b0bc0d1-167e-4c69-bff3-f973d38e3438`, ten saved
 patents, queue `finished`, exactly `job:1` usage, two refreshes, unchanged saved-row
-fingerprint `ebdafa6b0fb335b5555b73a07a213795`, exact evidence reopening through the
+fingerprint `564c08cd2b2440d3975756998e390f95`, exact evidence reopening through the
 dashboard, zero page errors. A second account receives API 404 and empty PostgREST
 rows for the first account; switching accounts removes the old private DOM. The
 only paid-operation endpoint requested was the single synthetic `/api/jobs` admission.
@@ -181,10 +181,10 @@ without paid replacement. The existing tests cover cancellation and lost-respons
 submission-key recovery. Export verification invokes `window.print`; it does not
 claim to inspect an operating-system print dialog or a generated PDF.
 
-Local logs: `/tmp/pm-release-backend-final.log`, `/tmp/pm-release-browser-final.log`,
-`/tmp/pm-release-lint-final.log`, `/tmp/pm-release-build-final.log`,
-`/tmp/pm-release-integrated-final.log`. Integrated screenshots/evidence are in
-`/tmp/pm-release-integrated-final/`; adversarial long-text screenshots are
+Local logs: `/tmp/pm-release-backend-final.log`, `/tmp/pm-release-browser-auth-final.log`,
+`/tmp/pm-release-auth-race-lint.log`, `/tmp/pm-release-auth-race-build.log`,
+`/tmp/pm-release-integrated-auth-final.log`. Integrated screenshots/evidence are in
+`/tmp/pm-release-integrated-auth-final/`; adversarial long-text screenshots are
 `/tmp/pm-release-{320,390,1280}.png` and corresponding `-viewport.png` files.
 Generated session configuration is private and must not be attached to the PR.
 
@@ -234,14 +234,45 @@ commands were repeated for that exact deployment and returned the same default
 context/not-found and explicit-scope/nonexistent errors. The blocker therefore
 also applies to the new branch, with no accessible build log or confirmed cause.
 Final-commit GitHub Actions and deployment status are linked in the PR body so they
-can identify the actual final documentation commit without a self-referential hash.
+can identify the actual final commit without a self-referential hash.
 
 Both GitHub jobs (`milestone1`, `auth-postgrest`) passed at implementation commit
 `c864002ecd57717bb13945945b219706d302289c` in
 [run 37828185542](https://github.com/Su760/patentmapper/actions/runs/37828185542).
 This includes the new integrated browser/API/separate-worker check. The final
-documentation commit is checked again before handoff; its exact SHA, run links and
-Vercel status are recorded in PR #1 rather than inferred from this earlier success.
+commit is checked again before handoff; its exact SHA, run links and Vercel status
+are recorded in PR #1 rather than inferred from this earlier success.
+
+### Final-commit CI caught an auth initialization race
+
+Both runs at the subsequent documentation commit `b5838df` failed their existing
+submission browser tests, despite the earlier implementation runs passing. The
+Auth/PostgREST/integrated jobs passed. The browser failure was:
+
+```text
+locator.click: Test timeout of 30000ms exceeded
+locator resolved to <button disabled type="submit" ...>
+element was detached from the DOM, retrying
+1 failed; 41 passed
+```
+
+`frontend/src/app/page.tsx:41` remounts the form when session loading becomes a
+known owner. The textarea previously accepted edits before that transition, so
+those edits disappeared and the submit button stayed disabled. The form now holds
+invention and jurisdiction entry disabled until authentication initializes and
+shows a session-checking placeholder. Actual account changes still reset the form
+and cancel pending requests.
+
+A deterministic browser regression holds the session's Web Lock, verifies entry
+is unavailable, releases initialization, then verifies exact inputs and one explicit
+submission. It failed before the fix with `Expected: disabled; Received: enabled`.
+Afterward all **43 frontend tests passed**, and the initialization/lost-response/
+account-switch tests passed **nine executions (three repeats each)** with no retry
+setting. The real integrated flow was rerun on this correction and its final
+artifacts above reflect that run. Build, typecheck and lint passed again. Independent
+read-only review confirmed the cause/fix and found no further blocking issue. The
+failed hosted runs are retained as evidence, not relabeled as infrastructure flakes.
+The final correction's hosted status is recorded in PR #1.
 
 ## Migration and runtime handoff
 

@@ -3,6 +3,29 @@ const job='10000000-0000-0000-0000-000000000001',owner='00000000-0000-0000-0000-
 const notice='AI inference from available abstracts, search snippets or titles.';
 const claim={patent_id:'fixture',title:'Saved overlap',likely_claims:['Saved aspect'],overlap_level:'low',overlap_explanation:'Limited overlap',differentiators:'Different design'};
 const long='LongIdentifier'.repeat(18);
+test('form waits for session initialization before accepting an invention',async({page,context})=>{
+ await setup(page,context);
+ await page.addInitScript(()=>{
+  const original=navigator.locks.request.bind(navigator.locks);
+  const gate=new Promise(resolve=>{window.__releaseSession=resolve;});
+  navigator.locks.request=async(name,...args)=>{
+   if(name.startsWith('lock:sb-')){window.__sessionWaiting=true;await gate;}
+   return original(name,...args);
+  };
+ });
+ const sent=[];await page.route('**/api/jobs',r=>{sent.push(r.request().postDataJSON());return r.fulfill({status:503,json:{detail:'Synthetic unconfirmed submission'}});});
+ await page.goto('/');await expect.poll(()=>page.evaluate(()=>window.__sessionWaiting)).toBe(true);
+ await expect(page.getByRole('textbox')).toBeDisabled();
+ await expect(page.getByRole('button',{name:'US',exact:true})).toBeDisabled();
+ expect(sent).toHaveLength(0);
+ await page.evaluate(()=>window.__releaseSession());
+ await expect(page.getByRole('textbox')).toBeEnabled();
+ await page.getByRole('textbox').fill('An irrigation controller with humidity sensors');
+ await page.getByRole('button',{name:'US',exact:true}).click();
+ await page.locator('button[type="submit"]').click();
+ await expect(page.getByText(/earlier submission is unconfirmed/)).toBeVisible();
+ expect(sent).toHaveLength(1);expect(sent[0].invention_idea).toBe('An irrigation controller with humidity sensors');expect(sent[0].jurisdiction).toBe('us');
+});
 async function setup(page,context,{cached={claims:[claim]},generated={claims:[claim]},lengthy=false}={}){
  const host=new URL(process.env.NEXT_PUBLIC_SUPABASE_URL||'https://example.supabase.co').hostname.split('.')[0];
  await context.addCookies([{name:`sb-${host}-auth-token`,value:encodeURIComponent(JSON.stringify({access_token:'fixture-token',refresh_token:'fixture-refresh',expires_at:Math.floor(Date.now()/1000)+3600,expires_in:3600,token_type:'bearer',user:{id:owner,email:'fixture@example.test',aud:'authenticated'}})),domain:'127.0.0.1',path:'/'}]);
