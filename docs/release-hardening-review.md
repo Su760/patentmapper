@@ -1,5 +1,64 @@
 # M1–M3a release hardening handoff
 
+## Staging preparation follow-up — 2026-10-09
+
+PR #1 and local/remote `release-hardening-m3a` were verified at
+`6db6050456fefd514ac08b47c68e0062056ced2b` before editing; there were no newer commits.
+Work continues in the same isolated worktree. The original dirty main is untouched
+by this pass, including its already-missing generated tsbuildinfo. The approved
+file boundary and progress are in `tasks/todo.md`.
+
+The three inert graph buttons are now functional: centered zoom from 50% to 200%
+in 25% steps, and expansion from 400px to 640px with collapse. Bounds/heights live
+in `frontend/src/lib/results-config.ts`. SVG viewBox changes scale actual rendered
+nodes/edges; memoized graph inputs keep zoom from restarting the simulation.
+Controls have accessible names, disabled limits, visible keyboard focus and 44px
+targets. Node details work by mouse and keyboard. Expansion is an inline taller
+view, not browser fullscreen. No graph engine, pan gestures or paid calls added.
+
+A new graph regression first failed with the labeled Zoom in control missing.
+After implementation, six graph/full-page layout checks passed at 320, 390 and
+1280px, including measured circle diameters, both bounds, expand/collapse heights,
+keyboard actions, mouse node details and zero paid requests. Screenshots were
+inspected. The combined relevant results suite passed **22 tests**:
+
+```bash
+# frontend/, with the public test configuration used by CI:
+npm run build
+npm run lint
+npx tsc --noEmit --incremental false
+npx playwright test --config playwright.config.cjs release-hardening.cjs milestone3a-ui.cjs
+```
+
+Build, typecheck and lint passed; the existing custom-font warning remains.
+Independent read-only review checked the graph diff and runbook against source and
+found no critical or important issue. The original main snapshot matches exactly
+for this pass: 86 existing files unchanged and the same already-missing cache file.
+Artifacts: `/tmp/pm-staging-graph-red.log`, `/tmp/pm-staging-graph-tests.log`,
+`/tmp/pm-staging-results-tests.log`, `/tmp/pm-staging-build.log`,
+`/tmp/pm-staging-lint.log`, `/tmp/pm-staging-graph-{320,390,1280}.png`.
+The 94-backend/43-frontend/integrated evidence below is reused from baseline;
+unchanged backend tests were not needlessly rerun locally. Final-commit CI reruns
+the full suites and separate-worker integration; exact final SHA/status is in PR #1.
+
+The [staging runbook](staging-runbook.md) inventories verified targets and gaps,
+read-only migration checks, variable names without values, startup/supervision,
+hosted synthetic acceptance and separately approved later live validation.
+The existing Vercel project is confirmed by its original local link and PR bot,
+but current team inventory exposes only `code-8ed4`, not `su2976`; `whoami` returns
+`Not authorized`. No blocked deployment-log commands were repeated and no logs
+were supplied. An authorized owner must export Build Logs and effective build
+settings or authenticate an existing account with project read access. No repository
+cause or hosted success is claimed. The configured Supabase project is INACTIVE
+and not verified non-production; no hosted staging API/worker or separate staging
+database target was verified. No target was created, restored or modified.
+
+Development advisories remain as documented below; no dependency changes or forced
+upgrades were made. No merge, manual deployment, hosted migration, paid request,
+Vercel setting/global-hook change or M3b work occurred.
+
+## Original release-hardening review
+
 Reviewed 2026-10-08. This branch makes malformed overlap data safe to open, upgrades
 the frontend to supported Next.js, and keeps the complete results page usable on
 small screens. It includes the cumulative M1–M3a implementation when compared with
@@ -118,7 +177,7 @@ current React ESLint plugin's peer range excludes ESLint 10. This is a retained
 tooling limitation, not a fully supported toolchain claim. No forced audit fix,
 peer bypass, Next downgrade or warning suppression was used.
 
-## Verification on the final code
+## Release-hardening verification at 6db6050
 
 | Check | Local result |
 | --- | --- |
@@ -318,9 +377,8 @@ requirements; it does not authorize or claim a production rollout.
   dependency audit is clean as of the review date.
 - `frontend/src/app/layout.tsx:26`: the pre-existing Next custom-font lint warning
   remains; no warning was disabled to pass checks.
-- `frontend/src/app/results/[id]/ResultsClient.tsx:1683`: existing graph +/−/expand
-  buttons have no handlers; this layout pass keeps them visible but does not invent
-  new graph interactions. Graph node details and the working toolbar actions passed.
+- The graph +/−/expand finding from baseline `ResultsClient.tsx:1683` was resolved
+  in the 2026-10-09 staging preparation above, with actual interaction regressions.
 - Synthetic integration cannot establish live provider coverage, paid model output
   quality, billing/webhook correctness or production infrastructure behavior.
 - Full claims retrieval, generated claim-to-quote matrices, automatic paid replay,

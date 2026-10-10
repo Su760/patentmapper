@@ -1034,8 +1034,8 @@ body:has(.pm-sticky-bar) .pm-nav {
   pointer-events: auto;
 }
 .pm-graph-ctl {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1048,9 +1048,17 @@ body:has(.pm-sticky-bar) .pm-nav {
   font-size: 13px;
   font-family: var(--font-mono);
 }
-.pm-graph-ctl:hover {
+.pm-graph-ctl:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-strong);
+}
+.pm-graph-ctl:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pm-graph-ctl:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 /* dashboard table */

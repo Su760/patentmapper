@@ -1,5 +1,20 @@
 # Patent Landscape Mapper — Task Tracker
 
+## Staging preparation (2026-10-09)
+
+**Approval:** User approves this bounded implementation, relevant tests, commits/push and updates to existing draft PR #1; record plan and proceed. No merge, manual deploy, production migration, paid calls/resources, Vercel settings/global hooks or M3b.
+**Baseline:** PR #1 and local/remote `release-hardening-m3a` match `6db6050456fefd514ac08b47c68e0062056ced2b`; no newer commits. Reuse clean isolated `/private/tmp/patentmapper-release-hardening`. Original dirty main remains `92b9580`, hash-snapshotted at `/tmp/pm-staging-original-snapshot.json` (86 existing files + already-missing generated tsbuildinfo); no edits there.
+**File boundary:** `tasks/todo.md`; `frontend/src/app/results/[id]/ResultsClient.tsx`; `frontend/src/app/globals.css`; `frontend/src/lib/results-config.ts` for graph bounds/heights; `frontend/tests/release-hardening.cjs` for graph regressions; `docs/release-hardening-review.md`; new `docs/staging-runbook.md`. `tasks/lessons.md` only if corrected by user. A confirmed Vercel repository cause must be documented and its exact files added before editing; absent logs, no guessed configuration patch.
+**Diagnosis/design:** `ResultsClient.tsx:1683-1685` renders three buttons without handlers; `CitationGraphSVG` at :581 uses a fixed 400px SVG without a viewBox. Implement 50–200% centered zoom in configured increments, and an inline expanded graph height with collapse. Keep controls labeled/keyboard-operable, preserve node details, and memoize graph inputs so zoom does not restart the simulation. This is a small interaction fix; no new graph engine, pan gestures or fullscreen modal.
+**Read-only target findings:** Original frontend `.vercel/project.json` identifies `patentmapper` / `prj_tuIqJdi6FeMUNPv870p5yrTZxAVN` / `team_4iAvucq5oMB84DAFG0Un4BIb`; PR bot confirms `su2976`. Current team listing exposes only `code-8ed4`; `whoami --format json` returns `Not authorized`. No blocked deployment-inspect command repeated. No build logs supplied or exposed in PR comments. Local config points to Supabase `poldwmkfuokuvepqftzl` (`PatentMapper`, `INACTIVE` in read-only inventory), not verified non-production, and localhost API. No existing hosted API/worker or separate staging database verified.
+
+- [x] Verify instructions, branch/PR/newer commits, preservation snapshot and existing evidence; identify targets/build configuration read-only.
+- [x] Add failing graph behavior regressions, implement bounded accessible zoom/expand, verify actual scaling/heights/node details and 320/390/desktop layouts.
+- [x] Write concrete staging runbook: target gaps/access action, migration-state checks, variable names, startup/supervision, synthetic acceptance, separate later bounded live validation. Retain development advisories.
+- [x] Run focused browser checks and relevant static/build checks; inspect diff/preservation and prepare publication. Reuse baseline backend/integrated evidence; final pushed commit and CI status are recorded in existing draft PR #1.
+
+**Verification/publication handoff:** Red graph test failed because Zoom in was absent. Six graph/layout tests and 22 relevant results tests passed; actual rendered scaling, disabled bounds, expand/collapse, keyboard/mouse details and 320/390/1280 layout verified. Build/typecheck/lint pass with existing font warning. Independent read-only review found no critical/important issue. Original main snapshot matches exactly (86 existing files + same missing generated cache); no unrelated changes. Final-commit hosted checks and deployment status are recorded in PR #1 after push, not inferred from baseline. No blocked Vercel command retried and no hosted success claimed.
+
 ## Release hardening on M3a (2026-10-08)
 
 **Approval:** User explicitly approves planning, implementation, relevant tests, read-only deployment diagnostics, independent read-only review, branch commits/push and a draft PR to main; proceed without routine approval. Never merge, manually deploy, migrate production, call paid providers, change Vercel/global-hook settings or implement M3b.

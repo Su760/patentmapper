@@ -115,3 +115,42 @@ test('dashboard history recovers from error after same-owner session refresh',as
  await expect(page.getByText('Could not load your analyses. Reload to retry or sign in again.')).toHaveCount(0);
  await expect(page.getByText('No searches yet')).toBeVisible();
 });
+
+for(const width of [320,390,1280])test(`graph controls scale, expand and preserve details at ${width}px`,async({page,context})=>{
+ await page.setViewportSize({width,height:900});const calls=await setup(page,context,{lengthy:true});
+ await page.goto(`/results/${job}`);
+ const panel=page.locator('.pm-graph-panel'),svg=panel.locator('svg');
+ const zoomIn=panel.getByRole('button',{name:'Zoom in',exact:true});
+ const zoomOut=panel.getByRole('button',{name:'Zoom out',exact:true});
+ await expect(zoomIn).toBeVisible();
+ const circle=svg.locator('circle').first();await expect(circle).toBeVisible();
+ const originalDiameter=(await circle.boundingBox()).width;
+ await zoomIn.focus();await page.keyboard.press('Enter');
+ await expect.poll(async()=>(await circle.boundingBox()).width).toBeCloseTo(originalDiameter*1.25,1);
+ for(let i=0;i<3;i++)await zoomIn.click();
+ await expect(zoomIn).toBeDisabled();
+ await expect.poll(async()=>(await circle.boundingBox()).width).toBeCloseTo(originalDiameter*2,1);
+ for(let i=0;i<6;i++)await zoomOut.click();
+ await expect(zoomOut).toBeDisabled();
+ await expect.poll(async()=>(await circle.boundingBox()).width).toBeCloseTo(originalDiameter*.5,1);
+ await zoomIn.click();await zoomIn.click();
+ const height=(await svg.boundingBox()).height;
+ await panel.getByRole('button',{name:'Expand graph',exact:true}).click();
+ const collapse=panel.getByRole('button',{name:'Collapse graph',exact:true});
+ await expect(collapse).toHaveAttribute('aria-expanded','true');
+ expect((await svg.boundingBox()).height).toBeGreaterThan(height);
+ const node=svg.getByRole('button',{name:`View details for ${long}`,exact:true});
+ await node.focus();await page.keyboard.press('Enter');
+ await expect(page.getByRole('button',{name:'Close',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Close',exact:true}).click();
+ await collapse.focus();await page.keyboard.press('Space');
+ await expect(panel.getByRole('button',{name:'Expand graph',exact:true})).toHaveAttribute('aria-expanded','false');
+ await expect.poll(async()=>(await svg.boundingBox()).height).toBe(height);
+ await circle.click();await expect(page.getByRole('button',{name:'Close',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Close',exact:true}).click();
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+ for(const control of await panel.locator('.pm-graph-ctl').all()){
+  const box=await control.boundingBox();expect(box.width).toBeGreaterThanOrEqual(44);expect(box.height).toBeGreaterThanOrEqual(44);
+ }
+ await panel.screenshot({path:`/tmp/pm-staging-graph-${width}.png`});expect(calls.paid).toBe(0);
+});

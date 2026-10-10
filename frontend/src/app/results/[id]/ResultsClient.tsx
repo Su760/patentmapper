@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   getJobStatus,
   getClaimsAnalysis,
@@ -14,7 +14,7 @@ import {
   EvidenceResponse,
   EvidencePatent,
 } from "@/lib/api";
-import { RESULTS_POLLING } from "@/lib/results-config";
+import { GRAPH_VIEW, RESULTS_POLLING } from "@/lib/results-config";
 import { startJobPolling } from "@/lib/poll-job";
 import { createClient } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
@@ -573,12 +573,15 @@ function CitationGraphSVG({
   nodes,
   links,
   onNodeClick,
+  zoom,
+  height,
 }: {
   nodes: GraphNode[];
   links: SimLink[];
   onNodeClick: (node: GraphNode) => void;
+  zoom: number;
+  height: number;
 }) {
-  const HEIGHT = 400;
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [positions, setPositions] = useState<
@@ -602,7 +605,7 @@ function CitationGraphSVG({
     iterRef.current = 0;
 
     const W = width;
-    const H = HEIGHT;
+    const H = height;
     const MAX_ITER = 250;
     const n = nodes.length;
 
@@ -688,14 +691,22 @@ function CitationGraphSVG({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [nodes, links, width]);
+  }, [nodes, links, width, height]);
 
   return (
     <div
       ref={containerRef}
-      className="w-full h-[400px] rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
+      className="w-full rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
+      style={{ height }}
     >
-      <svg width={width} height={HEIGHT} style={{ display: "block" }}>
+      <svg
+        id="patent-relationship-graph"
+        aria-label="Patent relationship graph"
+        width={width}
+        height={height}
+        viewBox={`${(width - width / zoom) / 2} ${(height - height / zoom) / 2} ${width / zoom} ${height / zoom}`}
+        style={{ display: "block" }}
+      >
         {links.map((link, i) => {
           const src = positions.get(link.source);
           const tgt = positions.get(link.target);
@@ -721,6 +732,15 @@ function CitationGraphSVG({
               key={node.id}
               transform={`translate(${pos.x},${pos.y})`}
               onClick={() => onNodeClick(node)}
+              role="button"
+              tabIndex={0}
+              aria-label={`View details for ${node.id}`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onNodeClick(node);
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <circle r={5} fill={color} />
@@ -742,13 +762,39 @@ function PatentGraphSection({
   citationLinks: CitationLink[];
   onNodeClick: (node: GraphNode) => void;
 }) {
-  const graphData = buildGraphData(clusters, citationLinks);
+  const graphData = useMemo(() => buildGraphData(clusters, citationLinks), [clusters, citationLinks]);
+  const [zoom, setZoom] = useState(GRAPH_VIEW.initialZoom);
+  const [expanded, setExpanded] = useState(false);
   return (
-    <CitationGraphSVG
-      nodes={graphData.nodes}
-      links={graphData.links}
-      onNodeClick={onNodeClick}
-    />
+    <div className="pm-graph-panel print:hidden">
+      <div className="pm-graph-grid"></div>
+      <div className="pm-graph-head">
+        <div className="pm-graph-legend">
+          {clusters.map((cluster, i) => (
+            <div key={cluster.theme_name} className="pm-graph-legend-row">
+              <span className="ldot" style={{ background: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }} />
+              {cluster.theme_name}
+            </div>
+          ))}
+        </div>
+        <div className="pm-graph-controls" role="group" aria-label="Graph controls">
+          <button type="button" className="pm-graph-ctl" aria-label="Zoom in" title="Zoom in"
+            disabled={zoom >= GRAPH_VIEW.maxZoom}
+            onClick={() => setZoom(value => Math.min(GRAPH_VIEW.maxZoom, value + GRAPH_VIEW.zoomStep))}>+</button>
+          <button type="button" className="pm-graph-ctl" aria-label="Zoom out" title="Zoom out"
+            disabled={zoom <= GRAPH_VIEW.minZoom}
+            onClick={() => setZoom(value => Math.max(GRAPH_VIEW.minZoom, value - GRAPH_VIEW.zoomStep))}>−</button>
+          <button type="button" className="pm-graph-ctl"
+            aria-label={expanded ? "Collapse graph" : "Expand graph"}
+            title={expanded ? "Collapse graph" : "Expand graph"}
+            aria-expanded={expanded} aria-controls="patent-relationship-graph"
+            onClick={() => setExpanded(value => !value)}>{expanded ? "⤡" : "⤢"}</button>
+          <span className="sr-only" role="status">Graph zoom: {Math.round(zoom * 100)}%</span>
+        </div>
+      </div>
+      <CitationGraphSVG nodes={graphData.nodes} links={graphData.links} onNodeClick={onNodeClick}
+        zoom={zoom} height={expanded ? GRAPH_VIEW.expandedHeight : GRAPH_VIEW.height} />
+    </div>
   );
 }
 
@@ -1663,34 +1709,11 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               </div>
             </div>
           </section>
-          <div className="pm-graph-panel print:hidden">
-            <div className="pm-graph-grid"></div>
-            <div className="pm-graph-head">
-              <div className="pm-graph-legend">
-                {clusters.map((c, i) => (
-                  <div key={c.theme_name} className="pm-graph-legend-row">
-                    <span
-                      className="ldot"
-                      style={{
-                        background: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
-                      }}
-                    ></span>
-                    {c.theme_name}
-                  </div>
-                ))}
-              </div>
-              <div className="pm-graph-controls">
-                <button className="pm-graph-ctl">+</button>
-                <button className="pm-graph-ctl">−</button>
-                <button className="pm-graph-ctl">⤢</button>
-              </div>
-            </div>
-            <PatentGraphSection
-              clusters={clusters}
-              citationLinks={citationLinks}
-              onNodeClick={setSelectedNode}
-            />
-          </div>
+          <PatentGraphSection
+            clusters={clusters}
+            citationLinks={citationLinks}
+            onNodeClick={setSelectedNode}
+          />
         </>
       )}
 

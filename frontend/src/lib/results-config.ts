@@ -5,3 +5,12 @@ export const RESULTS_POLLING = {
   maxRequests: 120,
   maxErrors: 3,
 };
+
+export const GRAPH_VIEW = {
+  minZoom: 0.5,
+  maxZoom: 2,
+  zoomStep: 0.25,
+  initialZoom: 1,
+  height: 400,
+  expandedHeight: 640,
+};
