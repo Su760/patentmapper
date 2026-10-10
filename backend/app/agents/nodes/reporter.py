@@ -2,7 +2,7 @@
 Reporter Node
 In:  all state fields
 Out: final_report (full markdown brief) + citation_links (conceptual relationship graph)
-Real impl: Groq llama-3.3-70b-versatile synthesizes everything into a structured report,
+Real impl: the configured Groq model synthesizes everything into a structured report,
 then infers conceptual relationships between patents for the frontend graph.
 """
 import json
@@ -15,7 +15,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
+from app.services.llm import create_chat_completion
+from app.services.evidence import validate_references
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +79,9 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     search_id = state["search_id"]
     logger.info("[reporter] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "writing_report"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "writing_report")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         report = _build_mock_report(state)
         logger.info("[reporter] mock mode — report generated (%d chars)", len(report))
         return {"final_report": report, "citation_links": []}
@@ -98,8 +99,8 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> str:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -121,8 +122,8 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5))
     async def _generate_citation_links() -> str:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {
                     "role": "user",
@@ -155,4 +156,6 @@ async def reporter_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     except Exception as e:
         logger.warning("[reporter] citation link generation failed, using []: %s", e)
 
-    return {"final_report": report, "citation_links": citation_links}
+    _, citation_links, warnings = validate_references([], citation_links, state["deduped_patents"])
+    return {"final_report": report, "citation_links": citation_links,
+            "analysis_warnings": state.get("analysis_warnings", []) + warnings}

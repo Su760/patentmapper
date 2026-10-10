@@ -1,4 +1,73 @@
+import { createClient } from "@/lib/supabase";
+import { DEMO_JOB_ID, DEMO_IDEA, DEMO_CLAIMS, DEMO_EVIDENCE } from "@/lib/demo";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+
+async function authHeaders(
+  jwt?: string,
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
+  // Supabase session refresh has no AbortSignal API. Stop waiting on cancellation
+  // so a late session response cannot launch an obsolete paid request.
+  if (signal?.aborted)
+    throw Object.assign(new Error("Request cancelled."), {
+      name: "AbortError",
+    });
+  const session = createClient().auth.getSession();
+  const { data, error } = await new Promise<Awaited<typeof session>>(
+    (resolve, reject) => {
+      const abort = () =>
+        reject(
+          Object.assign(new Error("Request cancelled."), {
+            name: "AbortError",
+          }),
+        );
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
+      session
+        .then(resolve, reject)
+        .finally(() => signal?.removeEventListener("abort", abort));
+    },
+  );
+  const token = jwt ?? data.session?.access_token;
+  if (error || !token)
+    throw Object.assign(
+      new Error(
+        "Sign in to access private analyses, or view the synthetic demo.",
+      ),
+      { status: 401 },
+    );
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function requireOK(res: Response): Promise<void> {
+  if (res.ok) return;
+  if (res.status === 401)
+    throw Object.assign(
+      new Error("Your session is missing or expired. Sign in again."),
+      { status: 401 },
+    );
+  if (res.status === 404)
+    throw Object.assign(
+      new Error("This analysis is unavailable to your account."),
+      { status: 404 },
+    );
+  const data = (await res.json().catch(() => ({}))) as {
+    detail?: string | { message?: string };
+  };
+  const message =
+    typeof data.detail === "string" ? data.detail : data.detail?.message;
+  throw Object.assign(new Error(message ?? `Request failed (${res.status}).`), {
+    status: res.status,
+    code: res.status === 402 ? "limit_reached" : undefined,
+  });
+}
 
 export interface JobCreatedResponse {
   job_id: string;
@@ -7,7 +76,8 @@ export interface JobCreatedResponse {
 
 export interface JobStatusResponse {
   job_id: string;
-  status: "processing" | "completed" | "failed";
+  status: "queued" | "running" | "finalizing" | "interrupted"
+    | "processing" | "completed" | "insufficient_evidence" | "failed";
   current_step: string | null;
   error_message: string | null;
 }
@@ -15,26 +85,21 @@ export interface JobStatusResponse {
 export async function createJob(
   inventionIdea: string,
   jurisdiction: string,
+  submissionKey: string,
   jwt?: string,
+  signal?: AbortSignal,
 ): Promise<JobCreatedResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
+  const headers = await authHeaders(jwt, signal);
   const res = await fetch(`${API_BASE}/jobs`, {
+    signal,
     method: "POST",
     headers,
-    body: JSON.stringify({ invention_idea: inventionIdea, jurisdiction }),
+    body: JSON.stringify({
+      invention_idea: inventionIdea, jurisdiction, submission_key: submissionKey,
+    }),
   });
 
-  if (res.status === 402) {
-    const data = (await res.json()) as { detail: { message: string } };
-    const message = data.detail?.message ?? "Monthly limit reached.";
-    throw Object.assign(new Error(message), { code: "limit_reached" });
-  }
-  if (!res.ok) {
-    throw new Error(`Failed to create job: ${res.status} ${res.statusText}`);
-  }
+  await requireOK(res);
 
   return res.json() as Promise<JobCreatedResponse>;
 }
@@ -49,20 +114,27 @@ export async function createCheckoutSession(
       Authorization: `Bearer ${jwt}`,
     },
   });
-  if (!res.ok) {
-    throw new Error(`Checkout session failed: ${res.status} ${res.statusText}`);
-  }
+  await requireOK(res);
   return res.json() as Promise<{ checkout_url: string }>;
 }
 
-export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
-  const res = await fetch(`${API_BASE}/jobs/${jobId}`);
-
-  if (!res.ok) {
-    throw new Error(
-      `Failed to fetch job status: ${res.status} ${res.statusText}`,
-    );
-  }
+export async function getJobStatus(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<JobStatusResponse> {
+  if (jobId === DEMO_JOB_ID)
+    return {
+      job_id: DEMO_JOB_ID,
+      status: "completed",
+      current_step: "done",
+      error_message: null,
+    };
+  const res = await fetch(`${API_BASE}/jobs/${jobId}`, {
+    signal,
+    headers: await authHeaders(undefined, signal),
+    cache: "no-store",
+  });
+  await requireOK(res);
 
   return res.json() as Promise<JobStatusResponse>;
 }
@@ -79,16 +151,19 @@ export async function ideateWhiteSpace(
   searchId: string,
   title: string,
   description: string,
+  signal?: AbortSignal,
 ): Promise<WhiteSpaceIdea> {
+  if (searchId === DEMO_JOB_ID) return structuredClone(DEMO_IDEA);
   const res = await fetch(`${API_BASE}/jobs/${searchId}/ideate`, {
+    signal,
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(undefined, signal),
     body: JSON.stringify({
       white_space_title: title,
       white_space_description: description,
     }),
   });
-  if (!res.ok) throw new Error(`Ideate failed: ${res.status}`);
+  await requireOK(res);
   return res.json() as Promise<WhiteSpaceIdea>;
 }
 
@@ -101,24 +176,127 @@ export interface ClaimResult {
   differentiators: string;
 }
 
+function parseClaimsResponse(value: unknown, saved: boolean): { claims: ClaimResult[] | null; warnings: string[] } {
+  const data = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const warnings: string[] = [];
+  if (data.warnings !== undefined) {
+    if (Array.isArray(data.warnings)) {
+      warnings.push(...data.warnings.filter((item): item is string => typeof item === "string"));
+    }
+    if (!Array.isArray(data.warnings) || warnings.length !== data.warnings.length) {
+      warnings.push("Excluded malformed overlap warnings.");
+    }
+  }
+  if (saved && data.claims === null) return { claims: null, warnings };
+  if (!Array.isArray(data.claims)) {
+    return { claims: [], warnings: [...warnings, "Excluded malformed overlap response; no replacement was generated."] };
+  }
+  const seen = new Set<string>();
+  const claims = data.claims.filter((item: unknown): item is ClaimResult => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Record<string, unknown>;
+    if (typeof row.patent_id !== "string" || !row.patent_id || seen.has(row.patent_id)
+      || typeof row.title !== "string" || typeof row.overlap_explanation !== "string"
+      || typeof row.differentiators !== "string" || !Array.isArray(row.likely_claims)
+      || !row.likely_claims.every((text: unknown) => typeof text === "string")
+      || !["high", "medium", "low", "none"].includes(row.overlap_level as string)) return false;
+    seen.add(row.patent_id);
+    return true;
+  });
+  const excluded = data.claims.length - claims.length;
+  if (excluded) warnings.push(`Excluded ${excluded} duplicate or malformed overlap records; no replacement was generated.`);
+  return { claims, warnings: Array.from(new Set(warnings)) };
+}
+
 export async function analyzeClaimsRequest(
   searchId: string,
-): Promise<{ claims: ClaimResult[] }> {
+  signal?: AbortSignal,
+): Promise<{ claims: ClaimResult[]; warnings?: string[] }> {
+  if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
   const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
+    signal,
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders(undefined, signal),
   });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `Analyze claims failed: ${res.status}`);
-  }
-  return res.json() as Promise<{ claims: ClaimResult[] }>;
+  await requireOK(res);
+  const parsed = parseClaimsResponse(await res.json(), false);
+  return { ...parsed, claims: parsed.claims ?? [] };
 }
 
 export async function getClaimsAnalysis(
   searchId: string,
-): Promise<{ claims: ClaimResult[] | null }> {
-  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`);
-  if (!res.ok) throw new Error(`Get claims failed: ${res.status}`);
-  return res.json() as Promise<{ claims: ClaimResult[] | null }>;
+  signal?: AbortSignal,
+): Promise<{ claims: ClaimResult[] | null; warnings?: string[] }> {
+  if (searchId === DEMO_JOB_ID) return { claims: structuredClone(DEMO_CLAIMS) };
+  const res = await fetch(`${API_BASE}/jobs/${searchId}/analyze-claims`, {
+    headers: await authHeaders(undefined, signal),
+    cache: "no-store",
+    signal,
+  });
+  await requireOK(res);
+  return parseClaimsResponse(await res.json(), true);
+}
+
+export interface UsageStatus {
+  plan: "free" | "pro";
+  window_seconds: number;
+  as_of: string;
+  usage: Record<
+    "job" | "claims" | "ideation",
+    { used: number; limit: number; remaining: number }
+  >;
+}
+
+export async function getUsageStatus(): Promise<UsageStatus> {
+  const res = await fetch(`${API_BASE}/stripe/subscription-status`, {
+    headers: await authHeaders(),
+    cache: "no-store",
+  });
+  await requireOK(res);
+  return res.json() as Promise<UsageStatus>;
+}
+
+export interface EvidenceObservation {
+  provider: string;
+  provider_record_id: string;
+  publication_id: string | null;
+  source_url: string | null;
+  retrieved_at: string | null;
+  matching_queries: string[];
+  text: string;
+  text_type: "abstract" | "search_snippet" | "title_only" | "synthetic";
+  language: string | null;
+  dates: { priority: string | null; filing: string | null; publication: string | null };
+  requested_jurisdiction: string;
+  jurisdiction_filter: { country: string } | null;
+  coverage_limitations: string[];
+}
+export interface EvidencePatent {
+  patent_id: string;
+  title: string;
+  abstract?: string | null;
+  url?: string | null;
+  evidence_status: "available" | "legacy_unknown" | "unsupported_version";
+  evidence: { version: number; observations: EvidenceObservation[] } | null;
+}
+export interface EvidenceResponse {
+  patents: EvidencePatent[];
+  evidence_version: number | null;
+  requested_jurisdiction: string | null;
+  warnings: string[];
+  clusters: { theme_name: string; description: string; patent_ids: string[]; ipc_codes?: string[]; top_assignees?: { name: string; count: number }[] }[];
+  citation_links: { source: string; target: string; strength: number }[];
+}
+export async function getEvidence(jobId: string, signal?: AbortSignal): Promise<EvidenceResponse> {
+  if (jobId === DEMO_JOB_ID) return structuredClone(DEMO_EVIDENCE);
+  const res = await fetch(`${API_BASE}/jobs/${jobId}/evidence`, {
+    headers: await authHeaders(undefined, signal), signal, cache: "no-store",
+  });
+  await requireOK(res);
+  const data = await res.json() as EvidenceResponse;
+  if (!Array.isArray(data.patents) || !Array.isArray(data.warnings) || !Array.isArray(data.clusters) || !Array.isArray(data.citation_links)) {
+    throw new Error("Saved evidence response is unavailable. Retry reads saved data only.");
+  }
+  return data;
 }

@@ -13,6 +13,8 @@ import httpx
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
+from app.services.evidence import observation, with_evidence, COVERAGE_LIMIT
 from app.core.config import settings
 from app.services.patent_api import fetch_lens_patents, fetch_serpapi_patents
 
@@ -114,6 +116,10 @@ MOCK_PATENTS: List[Dict[str, Any]] = [
 ]
 
 
+class RetrievalFailure(RuntimeError):
+    """Every attempted provider request failed; empty evidence is not established."""
+
+
 async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str, Any]:
     """Fetch raw patents for each search query."""
     search_id = state["search_id"]
@@ -123,51 +129,57 @@ async def fetcher_node(state: LandscapeState, supabase: AsyncClient) -> Dict[str
         len(state["search_queries"]),
     )
 
-    await supabase.table("searches").update({"current_step": "fetching_patents"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "fetching_patents")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         logger.info("[fetcher] mock mode — returning %d patents", len(MOCK_PATENTS))
-        return {"raw_patents": MOCK_PATENTS}
+        patents = [with_evidence({**p, "url": None, "source": "synthetic", "filing_year": None}, [observation(
+            provider="synthetic", record_id=p["patent_id"], publication_id=None, url=None,
+            query="", text=p["abstract"], text_type="synthetic", jurisdiction=state.get("jurisdiction", "all"),
+            dates={})]) for p in MOCK_PATENTS]
+        return {"raw_patents": patents, "retrieval_outcome": "complete",
+                "coverage_warnings": ["Synthetic demo evidence; no patent retrieval was performed."],
+                "requested_jurisdiction": state.get("jurisdiction", "all"), "evidence_version": 1}
 
     queries = state["search_queries"]
+    if not queries:
+        raise RetrievalFailure("Patent retrieval failed: no search queries were generated. No providers were called.")
 
     jurisdiction = state.get("jurisdiction", "all")
 
     async def _fetch_with_fallback(
         client: httpx.AsyncClient, query: str
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], int, int]:
         async with _SEMAPHORE:
-            # Priority 1: Lens.org
-            logger.info("[fetcher] querying Lens.org for: %s", query)
+            successes, failures = 0, 0
             try:
-                results: List[Dict[str, Any]] = await fetch_lens_patents(
-                    query, client, api_key=settings.lens_api_key
-                )
-                logger.info("[fetcher] Lens.org returned %d results", len(results))
+                results = await fetch_lens_patents(query, client, api_key=settings.lens_api_key, jurisdiction=jurisdiction)
+                successes += 1
                 if results:
-                    return results
-            except Exception as e:
-                logger.warning("[fetcher] Lens.org failed, falling back to SerpAPI: %s", e)
-            # Priority 2: SerpAPI fallback
-            if settings.serpapi_enabled:
-                logger.info("[fetcher] Lens.org failed, falling back to SerpAPI for: %s", query)
+                    return results, successes, failures
+            except Exception:
+                failures += 1
+                logger.warning("[fetcher] Lens request failed; checking configured fallback")
+            if option("serpapi_enabled"):
                 try:
-                    return await fetch_serpapi_patents(
-                        query, client, settings.serpapi_key, jurisdiction
-                    )
-                except Exception as e:
-                    logger.warning("[fetcher] SerpAPI also failed for query '%s': %s", query, e)
-            return []
+                    results = await fetch_serpapi_patents(query, client, settings.serpapi_key, jurisdiction)
+                    return results, successes + 1, failures
+                except Exception:
+                    failures += 1
+                    logger.warning("[fetcher] SerpAPI request failed")
+            return [], successes, failures
 
     async with httpx.AsyncClient() as client:
-        tasks = [_fetch_with_fallback(client, q) for q in queries]
-        results_per_query = await asyncio.gather(*tasks)
-
-    raw_patents: List[Dict[str, Any]] = []
-    for result in results_per_query:
-        raw_patents.extend(result)
-
-    logger.info("[fetcher] real mode — fetched %d patents", len(raw_patents))
-    return {"raw_patents": raw_patents}
+        outcomes = await asyncio.gather(*(_fetch_with_fallback(client, q) for q in queries))
+    if not any(successes for _, successes, _ in outcomes):
+        raise RetrievalFailure("Patent retrieval failed: all attempted providers failed. No conclusions were generated.")
+    raw_patents = [patent for patents, _, _ in outcomes for patent in patents]
+    failures = sum(failed for _, _, failed in outcomes)
+    warnings = (["Some patent provider requests failed. Coverage is incomplete; conclusions use only the available results."]
+                if failures else [])
+    warnings.append(COVERAGE_LIMIT)
+    if jurisdiction != "all":
+        warnings.append("Lens requests do not apply the requested jurisdiction filter; SerpAPI fallback requests submit a country filter.")
+    return {"raw_patents": raw_patents, "evidence_version": 1, "requested_jurisdiction": jurisdiction,
+            "retrieval_outcome": ("partial" if failures else "complete") if raw_patents else "insufficient_evidence",
+            "coverage_warnings": warnings}

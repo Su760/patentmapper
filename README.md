@@ -4,14 +4,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-14-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=next.js&logoColor=white)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-4A90E2?style=flat-square)](https://github.com/langchain-ai/langgraph)
 [![Supabase](https://img.shields.io/badge/Supabase-postgres-3ECF8E?style=flat-square&logo=supabase&logoColor=white)](https://supabase.com)
 [![Stripe](https://img.shields.io/badge/Stripe-billing-635BFF?style=flat-square&logo=stripe&logoColor=white)](https://stripe.com)
 
 ---
 
-PatentMapper is a multi-agent AI pipeline that turns a plain-English invention description into a full patent landscape brief in under 60 seconds. Describe your idea, and six specialized LangGraph agents fan out across USPTO, Lens.org, and Google Patents to fetch, deduplicate, and cluster the prior art — then synthesize a structured report identifying white space opportunities, cluster themes, competitor assignees, and a force-directed relationship graph showing how existing patents connect to each other. Everything enterprise patent tools charge $500/month for, productized into a clean freemium SaaS with a $49/month Pro tier.
+PatentMapper is a multi-agent AI pipeline that turns a plain-English invention description into a full patent landscape brief in under 60 seconds. Describe your idea, and six specialized LangGraph agents fan out across Lens.org and Google Patents to fetch, deduplicate, and cluster the prior art — then synthesize a structured report identifying white space opportunities, cluster themes, competitor assignees, and a force-directed relationship graph showing how existing patents connect to each other. Everything enterprise patent tools charge $500/month for, productized into a clean freemium SaaS with a $49/month Pro tier.
 
 ---
 
@@ -28,15 +28,15 @@ PatentMapper is a multi-agent AI pipeline that turns a plain-English invention d
 ## Features
 
 - **Multi-agent AI pipeline** — 6 discrete LangGraph nodes in a strict DAG: query expander, patent fetcher, deduplicator, clusterer, whitespace analyzer, and reporter. Each node writes its `current_step` to Supabase so the frontend stepper reflects real pipeline progress in real time.
-- **3-tier patent fetching with automatic fallback** — PatentsView (USPTO, free, primary) → Lens.org (international, secondary) → SerpAPI/Google Patents (tertiary). Queries run in parallel across all search terms with a semaphore cap of 5; each tier falls through only on failure or empty results.
-- **Semantic clustering by theme** — passes the top 50 patent abstracts to Groq (Llama 3.3 70B) and asks for 3–5 named thematic clusters with IPC code tagging and competitor assignee breakdowns per cluster — no k-means, no pgvector, no embeddings infrastructure required.
+- **2-tier patent fetching with automatic fallback** — Lens.org (international, primary) → SerpAPI/Google Patents (fallback). Queries run in parallel across all search terms with a semaphore cap of 5; the fallback tier only fires on failure or empty results.
+- **Semantic clustering by theme** — passes the top 50 patent abstracts to Groq (GPT-OSS 120B by default) and asks for 3–5 named thematic clusters with IPC code tagging and competitor assignee breakdowns per cluster — no k-means, no pgvector, no embeddings infrastructure required.
 - **White space analysis with viability scores** — Groq identifies gaps in the landscape with citation-format rationale ("Gap X because Cluster A patents only cover Y") and a High/Medium/Low viability score per opportunity.
-- **Interactive citation/relationship graph** — after the report is written, a second Groq pass infers conceptual relationships between the top 30 patents and renders them as a force-directed canvas graph (react-force-graph-2d) with per-cluster color coding and a click-through side panel showing patent details.
-- **IPC/CPC classification tagging** — CPC subgroup codes from PatentsView and IPC codes from Lens.org are normalized and surfaced per cluster.
+- **Interactive citation/relationship graph** — after the report is written, a second Groq pass infers conceptual relationships between the top 30 patents and renders them as an interactive SVG relationship graph with per-cluster color coding and a click-through side panel showing patent details.
+- **IPC classification tagging** — IPC codes from Lens.org are normalized and surfaced per cluster.
 - **Assignee/competitor breakdown** — each cluster card shows the top 3 assignees by patent count so you can see who dominates each technical area at a glance.
-- **Jurisdiction filtering** — submit searches scoped to US, EP, WO, or All; PatentsView gracefully skips non-US queries and defers to Lens.org.
+- **Jurisdiction filtering** — submit searches scoped to US, EP, WO, or All.
 - **PDF export** — `@media print` CSS with a dedicated print footer; no server-side PDF generation required.
-- **Freemium auth + Stripe billing** — anonymous sessions (search ID in localStorage) for unauthenticated users, magic-link auth via Supabase, 3 free analyses/month on the free tier, unlimited on Pro ($49/mo), Stripe Checkout + webhook handler for full subscription lifecycle management.
+- **Private analyses + Stripe billing** — Supabase magic-link auth, owner-only access, atomic usage reservations for jobs/claims/ideation, and finite free/Pro allowances. Verified Supabase anonymous sessions can own private jobs; signed-out visitors see only a fixed synthetic demo. A job UUID or localStorage entry never grants access.
 
 ---
 
@@ -46,11 +46,11 @@ PatentMapper is a multi-agent AI pipeline that turns a plain-English invention d
 User Input (plain-English invention description)
         │
         ▼
-  FastAPI POST /jobs  ──►  Supabase  (searches row, status: processing)
+  FastAPI POST /jobs  ──►  Supabase  (quota + owned job + durable queued inputs)
         │
         │  returns job_id immediately — never awaits the pipeline
         ▼
-  BackgroundTask
+  Separate worker (atomic claim, lease, heartbeat, fencing)
   ┌─────────────────────────────────────────────────────────────────┐
   │                      LangGraph DAG                              │
   │                                                                 │
@@ -58,7 +58,7 @@ User Input (plain-English invention description)
   │          │              (Groq function calling, forced list)     │
   │          ▼                                                       │
   │  2. Patent Fetcher      queries → raw_patents                   │
-  │          │              PatentsView → Lens.org → SerpAPI        │
+  │          │              Lens.org → SerpAPI                      │
   │          │              (parallel async HTTP, semaphore=5)      │
   │          ▼                                                       │
   │  3. Deduplicator        raw_patents → deduped_patents           │
@@ -80,42 +80,41 @@ User Input (plain-English invention description)
   └─────────────────────────────────────────────────────────────────┘
         │
         ▼
-  Supabase  ──►  searches         (status: completed)
+  durable output checkpoint → fenced publish_analysis transaction ──► searches (completed / insufficient_evidence)
                  search_results   (clusters, white_space_analysis,
-                                   citation_links JSONB)
+                                   final_report, citation_links, coverage warnings)
                  patents          (individual rows per deduped patent)
         │
         ▼
   Next.js Frontend
-        │  polls GET /jobs/{id} every 3s
+        │  bounded sequential GET /jobs/{id}, 3s between requests
         │  stepper UI tracks current_step from DB
         ▼
   Results page:
     White Space Opportunity cards (viability-scored)
     Prior Art Cluster grid (IPC codes + assignees + patent links)
     Force-directed Citation Graph (node color = cluster, click for details)
-    Full markdown brief
+    Saved full markdown brief + cached claims (GET only on reopen)
 ```
 
 ---
 
 ## Tech Stack
 
-| Layer                       | Technology                                                          |
-| --------------------------- | ------------------------------------------------------------------- |
-| **Frontend**                | Next.js 14 App Router, TypeScript (strict), Tailwind CSS            |
-| **Backend**                 | FastAPI (fully async), Python 3.13, Pydantic v2                     |
-| **Agent framework**         | LangGraph — strict DAG, 6 nodes, typed `LandscapeState`             |
-| **LLM**                     | Groq — Llama 3.3 70B Versatile (fast inference, generous free tier) |
-| **Patent data (primary)**   | PatentsView API — USPTO open data, free, CPC classification         |
-| **Patent data (secondary)** | Lens.org free API — international coverage, IPC classification      |
-| **Patent data (tertiary)**  | SerpAPI — Google Patents scraping, last-resort fallback             |
-| **Database**                | Supabase — Postgres, Row Level Security, Auth, Storage              |
-| **Auth**                    | Supabase magic link + anonymous sessions via localStorage           |
-| **Payments**                | Stripe Checkout + webhooks, subscriptions table with RLS            |
-| **Graph visualization**     | react-force-graph-2d — canvas, SSR-disabled, WebGL-accelerated      |
-| **HTTP client**             | httpx (async), semaphore-gated parallel fetching                    |
-| **Retry logic**             | tenacity — exponential backoff, 2–3 attempts per API call           |
+| Layer                      | Technology                                                       |
+| -------------------------- | ---------------------------------------------------------------- |
+| **Frontend**               | Next.js 16.4 App Router, TypeScript (strict), Tailwind CSS         |
+| **Backend**                | FastAPI (fully async), Python 3.13, Pydantic v2                  |
+| **Agent framework**        | LangGraph — strict DAG, 6 nodes, typed `LandscapeState`          |
+| **LLM**                    | Groq — GPT-OSS 120B by default (configurable via `GROQ_MODEL`)   |
+| **Patent data (primary)**  | Lens.org free API — international coverage, IPC classification   |
+| **Patent data (fallback)** | SerpAPI — Google Patents scraping                                |
+| **Database**               | Supabase — Postgres, Row Level Security, Auth, Storage           |
+| **Auth**                   | Supabase magic link; verified anonymous users; fixed public demo |
+| **Payments**               | Stripe Checkout + webhooks, subscriptions table with RLS         |
+| **Graph visualization**    | Interactive SVG graph with AI-inferred relationships             |
+| **HTTP client**            | httpx (async), semaphore-gated parallel fetching                 |
+| **Retry logic**            | tenacity — exponential backoff, 2–3 attempts per API call        |
 
 ---
 
@@ -123,11 +122,11 @@ User Input (plain-English invention description)
 
 ### Prerequisites
 
-- Python 3.13+
-- Node.js 18+
+- Python 3.11–3.13 (pinned dependencies do not currently support Python 3.14)
+- Node.js 22 LTS (22.14 or newer within 22.x; use the current patched 22.x release)
 - A [Supabase](https://supabase.com) project (free tier works)
 - At least one LLM key: [Groq](https://console.groq.com) (free tier, fast)
-- Patent APIs: PatentsView works without a key at reduced rate limits
+- Patent APIs: a valid Lens.org bearer token; SerpAPI fallback if enabled
 
 ### 1. Clone
 
@@ -148,66 +147,31 @@ cp ../.env.example ../.env
 # Edit .env — at minimum set GROQ_API_KEY + the three SUPABASE vars
 ```
 
-Run the following SQL in your Supabase project's SQL editor:
+Stop API and worker processes before applying migrations 5 and 6. Apply the checked-in migrations to a **development/test Supabase project** before starting the updated API and separate worker. Review existing policies first: migration 1 replaces policies on searches, results, patents, and subscriptions with owner-only reads and server-only writes.
 
-```sql
-CREATE TABLE searches (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  invention_idea TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'processing',
-  current_step TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  error_message TEXT
-);
-
-CREATE TABLE search_results (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  search_id UUID REFERENCES searches(id) ON DELETE CASCADE UNIQUE,
-  clusters JSONB,
-  white_space_analysis TEXT,
-  citation_links JSONB DEFAULT '[]',
-  pdf_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE patents (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  search_id UUID REFERENCES searches(id) ON DELETE CASCADE,
-  patent_id TEXT,
-  title TEXT,
-  abstract TEXT,
-  assignee TEXT,
-  url TEXT
-);
-
--- Stripe billing (skip if not using payments)
-CREATE TABLE subscriptions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL UNIQUE,
-  stripe_customer_id TEXT,
-  stripe_subscription_id TEXT,
-  plan TEXT NOT NULL DEFAULT 'free',
-  status TEXT NOT NULL DEFAULT 'active',
-  current_period_end TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can read own subscription" ON subscriptions
-  FOR SELECT USING (auth.uid() = user_id);
+```bash
+# Run from the repository root, with a development database URL set externally.
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020001_private_analyses.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020002_bounded_usage.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610020003_usage_snapshot.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610030001_saved_results.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610040001_durable_jobs.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/202610040002_evidence_workbench.sql
+psql "$PATENTMAPPER_DEV_DATABASE_URL" -v ON_ERROR_STOP=1 -c "NOTIFY pgrst, 'reload schema'"
 ```
+
+Alternatively, execute those six files in order in that project's SQL editor. The migrations support the older documented schema, add citation/claims fields, retain legacy ownerless rows without assigning ownership, and seed historical job usage. New ownerless searches are forbidden. Do not run `supabase/tests/bootstrap.sql` against an application database; it resets schemas and is only for the disposable test harness.
 
 ### 3. Frontend setup
 
 ```bash
 cd frontend
-npm install
+npm ci
 
 cat > .env.local <<EOF
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8000/api
 EOF
 ```
 
@@ -220,13 +184,16 @@ cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 
 # Terminal 2 — frontend
 cd frontend && npm run dev
 
-# Terminal 3 — Stripe webhooks (only needed for billing)
+# Terminal 3 — durable worker (required for private analyses)
+cd backend && source .venv/bin/activate && python -m app.worker
+
+# Terminal 4 — Stripe webhooks (only needed for billing)
 stripe listen --forward-to localhost:8000/api/stripe/webhook
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and submit an invention description.
+Open [http://localhost:3000](http://localhost:3000). Signed-out users can view the synthetic demo; sign in with a Supabase magic link to submit a private invention description. Configure the Auth redirect allowlist for `/auth/callback`. The frontend does not automatically create anonymous accounts. Existing verified anonymous sessions work with the same owner policies and free limits; if you enable anonymous sign-ins in Supabase, configure its abuse controls as well.
 
-> **Tip:** Set `MOCK_MODE=true` in `.env` to run the entire pipeline with synthetic patent data — no API keys consumed, full UI flow intact. Useful for frontend development and demos.
+> **Tip:** Set `MOCK_MODE=true` in `.env` to run the landscape pipeline with synthetic patent data. Authentication and quotas still apply; claims and ideation remain model-backed and quota-gated. The signed-out demo runs entirely in the browser and consumes no database or provider usage. Useful for frontend development and demos.
 
 ---
 
@@ -234,32 +201,154 @@ Open [http://localhost:3000](http://localhost:3000) and submit an invention desc
 
 All variables live in `.env` at the project root (one directory above `backend/`).
 
-| Variable                | Required | Description                                                                                               |
-| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------- |
-| `GROQ_API_KEY`          | ✅       | Groq API key — powers all 6 agent nodes (query expansion, clustering, whitespace, report, citation links) |
-| `SUPABASE_URL`          | ✅       | Supabase project URL                                                                                      |
-| `SUPABASE_ANON_KEY`     | ✅       | Supabase anon key — used by backend for JWT verification                                                  |
-| `SUPABASE_SERVICE_KEY`  | ✅       | Supabase service role key — used by Stripe webhook to bypass RLS when writing subscription rows           |
-| `PATENTSVIEW_KEY`       | —        | USPTO PatentsView API key — optional, works without it at default rate limits                             |
-| `PATENTSVIEW_ENABLED`   | —        | Set `false` to skip PatentsView (default: `true`)                                                         |
-| `LENS_API_KEY`          | —        | Lens.org API key — optional, basic queries work unauthenticated                                           |
-| `SERPAPI_KEY`           | —        | SerpAPI key for Google Patents — only used if PatentsView and Lens.org both fail                          |
-| `SERPAPI_ENABLED`       | —        | Set `false` to disable SerpAPI fallback entirely (default: `true`)                                        |
-| `STRIPE_SECRET_KEY`     | —        | Stripe secret key (`sk_...`) — only needed for billing                                                    |
-| `STRIPE_PRO_PRICE_ID`   | —        | Stripe Price ID for the $49/month Pro plan                                                                |
-| `STRIPE_WEBHOOK_SECRET` | —        | Stripe webhook signing secret (`whsec_...`)                                                               |
-| `MOCK_MODE`             | —        | `true` returns synthetic patent data, burns no API credits (default: `false`)                             |
+| Variable                | Required | Description                                                                                                                       |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `GROQ_API_KEY`          | ✅       | Groq key — powers query expansion, clustering, whitespace, report/links, claims, and ideation                                     |
+| `GROQ_MODEL`            | —        | Groq model identifier (default: `openai/gpt-oss-120b`)                                                                            |
+| `SUPABASE_URL`          | ✅       | Supabase project URL                                                                                                              |
+| `SUPABASE_ANON_KEY`     | ✅       | Supabase public anon key; frontend also needs NEXT_PUBLIC_SUPABASE_ANON_KEY                                                       |
+| `SUPABASE_SERVICE_KEY`  | ✅       | Server-only service key — backend persistence, owner-filtered reads, usage RPC, and billing writes; never expose as NEXT_PUBLIC_* |
+| `LENS_API_KEY`          | —        | Lens.org bearer token; needed for Lens requests                                                                                   |
+| `SERPAPI_KEY`           | —        | SerpAPI key for Google Patents — only used if Lens.org fails                                                                      |
+| `SERPAPI_ENABLED`       | —        | Set `false` to disable SerpAPI fallback entirely (default: `true`)                                                                |
+| `STRIPE_SECRET_KEY`     | —        | Stripe secret key (`sk_...`) — only needed for billing                                                                            |
+| `STRIPE_PRO_PRICE_ID`   | —        | Stripe Price ID for the $49/month Pro plan                                                                                        |
+| `STRIPE_WEBHOOK_SECRET` | —        | Stripe webhook signing secret (`whsec_...`)                                                                                       |
+| `MOCK_MODE`             | —        | `true` makes the landscape graph synthetic; claims/ideation still use the model (default: `false`)                                |
 
 ---
 
-## Roadmap
+## Milestone 1: Private, bounded analyses
 
-- [ ] USPTO Open Data Portal integration for bulk patent downloads and citation graphs
-- [ ] Technology trend timeline — patent filing velocity over time per cluster
-- [ ] Claim-level analysis agent — parse independent claims and map directly to prior art
-- [ ] Team workspaces — share and annotate landscapes across org members
-- [ ] API access for Pro users — `POST /v1/analyze` with webhook delivery on completion
+Every real job endpoint validates the access token with Supabase Auth. Missing, malformed, invalid, or expired credentials return 401; another user's, nonexistent, or legacy ownerless job returns 404 before model/patent calls. Browser table reads use ownership RLS; browser writes are denied even for the owner. Only the backend can write, and its service key remains server-only. The public `/results/demo` route uses fixed synthetic data and never accesses private rows.
 
----
+Dashboard and pricing read `paid_usage_snapshot` through the authenticated API: the same plan, reservation ledger, and configured rolling window used by enforcement. Claims and ideation have their own allowances. Status outages display a retryable error, never a fabricated Free/zero allowance.
+
+The service-only `reserve_paid_operation` RPC locks admission, checks subscription status and rolling usage, and inserts a consumed reservation in one transaction. This works across concurrent workers and users. Quota/subscription-store failure returns 503 and starts no paid work; malformed admission responses also fail closed. Reservations are not refunded after provider, insert, or background-task failures. A service-wide cap also bounds account cycling; these are operation allowances, not an exact dollar-cost meter.
+
+Default allowances in `.env.example` / `backend/app/core/config.py`:
+
+| Operation         | Free / verified anonymous | Pro |
+| ----------------- | ------------------------: | --: |
+| Landscape job     |                         3 | 100 |
+| Claims generation |                         3 | 100 |
+| Ideation          |                         6 | 200 |
+
+`GLOBAL_OPERATION_LIMIT=1000` applies across all users and operations in a rolling `QUOTA_WINDOW_DAYS=30` window. `FREE_*_LIMIT` and `PRO_*_LIMIT` configure individual allowances. Setting a limit to zero disables its operation. Cached claims/status reads do not consume usage. Historical jobs count toward usage; ownership is never inferred from their IDs. Configure the caps before offering paid plans. Startup SQL log messages are historical reminders, not automatic migrations; the checked-in migration files are authoritative.
+
+Invention input is trimmed and limited to 20–2000 characters. Ideation titles/descriptions are trimmed, nonempty, and limited to 200/4000 characters. Those limits are configurable through the corresponding variables in `.env.example`; keep the frontend's existing 20–2000 character UI consistent if changing the server limits. Jurisdiction must be `all`, `us`, `ep`, or `wo`. Unsupported fields/inputs return 422 before paid work.
+
+## Reliable saved results (M2a)
+
+`final_report` is saved separately from `white_space_analysis` and displayed in Full analysis brief. Older rows without it show an unavailable state; opening a result never regenerates a report or claims. Claims are loaded through the authenticated cached GET; generation/regeneration requires an explicit action and consumes one claims reservation, including failed paid attempts. Anonymous sessions must sign in/create a permanent account before Stripe checkout.
+
+The browser displays persisted stages, uses one sequential status request at a time, times out reads after 15 seconds, pauses after three consecutive failures or 120 status requests, and cancels requests/timers on navigation or account changes. Retry status and Retry saved claims perform free reads only. Limits are in `frontend/src/lib/results-config.ts`.
+
+If all provider attempts fail, the search fails explicitly. Successful retrieval with no usable patents (nonempty ID plus title or abstract) finishes as `insufficient_evidence` without clustering/gap/report/claims generation. Partial retrieval retains available evidence with saved coverage warnings. The original semaphore of five and finite provider retries remain.
+
+The service-only `publish_analysis` RPC atomically saves result/patent rows and completion using a fenced durable output checkpoint. The legacy `finalize_analysis` RPC is internal-only; service callers cannot execute it. Successful publication retries are no-ops and preserve cached claims. Browser RLS covers saved reports.
+
+## Durable jobs (M2b1)
+
+POST `/api/jobs` requires a UUID `submission_key`, invention text and jurisdiction. Server-verified owner + key + identical normalized payload returns the original job, including after a lost response, without another reservation. Changed payload with the same key returns 409. The browser saves unconfirmed keys per account in session storage, restores inputs after reload and reuses the key when you retry. It never automatically resubmits a paid request. Changing inputs creates a separate paid analysis; clearing browser storage or changing tabs can lose retry identity, so check the dashboard before starting over.
+
+Admission reserves quota, creates the owned search and queues its inputs in one transaction. Quota or insert failures roll everything back; a response timeout can still mean admission committed, so retry with the same key. The API never runs the graph. Start a **separate long-running worker** with the same server configuration (from `backend/`):
+
+```bash
+python -m app.worker
+# Separate terminal/process:
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Queued work survives API/worker restarts. A worker claims with an expiring token and checks ownership before stages/provider calls. Expired running jobs become `interrupted`, including on free owner status reads when workers are offline. They are never automatically rerun. Paid attempts retain their reservation; a fresh analysis consumes new usage. A crash after the last provider response but before its durable checkpoint is still interrupted.
+
+Valid complete output is checkpointed before publication. `finalizing` jobs can recover from that snapshot without provider calls. Publication attempts are bounded by worker concurrency and lease cadence; fair claim ordering prevents a persistently failing publication from monopolizing the queue. Persistent database/schema errors require operator attention; there is no automatic paid replay or exactly-once external-call guarantee. In-flight provider requests may already have been charged when a worker loses its lease.
+
+`WORKER_CONCURRENCY` bounds each process; all workers must share `WORKER_MAX_ACTIVE` for the global database claim cap. Configure timings in `.env.example`. Lease tokens fence stage/status/output writes; old RPC/direct service mutation bypasses are denied. Legacy owned `processing` jobs become interrupted during migration; ownerless legacy records remain untouched and hidden. Downgrading to the old background-task API is incompatible with these fences; roll forward without deleting queued inputs or saved output. See [M2b1 review](docs/milestone-2b1-review.md) for exact verification and migration/rollback details.
+
+## Saved evidence workbench (M3a)
+
+Saved results include an owner-only evidence workbench. Search/select records to inspect exact saved text, provider identity and record ID, supplied publication identifier, source URL, retrieval time, matching queries, separate priority/filing/publication dates, requested jurisdiction and actual submitted provider filter. Evidence reads and reopening use no paid calls. Synthetic demos are labeled; missing historical provenance stays unknown and is never regenerated.
+
+Lens abstracts and SerpAPI search snippets retain different text types. IDs used by analysis are provider-qualified record IDs, not publication numbers. Repeated observations survive deduplication; records from different providers remain separate even if they share a publication number. Counts describe retrieved records, not verified unique publications or patent families. Lens requests currently apply no jurisdiction filter; SerpAPI submits its supported country parameter. Coverage is limited, and filing-trend charts are suppressed.
+
+Clusters and conceptual relationships exclude structured IDs outside the saved evidence set with visible warnings. Relationships, reports, gaps and overlap analysis remain AI inference; no retrieved patent claim language or verified citation graph is claimed. Full text claims and a generated claim-to-quote matrix remain deferred.
+
+**Upgrade:** stop API/workers, apply only migration 6 (`202610040002_evidence_workbench.sql`) to an M2b database using the administrative migration role, then start the updated API and worker together. New execution inputs use version 2; queued v1 inputs are explicitly upgraded, running v1 inputs are interrupted without replay/refund, and finalizing v1 snapshots still publish provider-free as legacy evidence. Existing result evidence remains NULL. Do not run older application processes alongside the new schema or downgrade the application blindly. See [M3a review](docs/milestone-3a-review.md) for the contract, exact checks and limitations.
+
+## Checks and local database regressions
+
+```bash
+cd frontend && npm ci
+npm run lint
+npx tsc --noEmit --incremental false
+npm run build
+cd ../backend
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+The last command skips SQL integration unless `MILESTONE1_TEST_DSN` is set and skips Auth/PostgREST unless a disposable local Supabase config is provided. To include the PostgreSQL checks locally, create a disposable PostgreSQL database named exactly `patentmapper_m1_test` on a local cluster:
+
+```bash
+createdb patentmapper_m1_test
+cd backend
+MILESTONE1_TEST_DSN='postgresql://localhost/patentmapper_m1_test' \
+  REQUIRE_FRONTEND_TESTS=1 python -m unittest discover -s tests -v
+```
+
+Use your local administrative PostgreSQL user/credentials in the DSN when needed. The SQL harness refuses remote hosts or any other database name, then resets the `public`/`auth` schemas in that disposable database, applies the real migrations, and tests role-based browser access, API ownership, concurrent last-unit admission, fail-closed storage errors, Pro/anonymous bounds, policy upgrades, and legacy seeding. Supabase Auth and model/patent providers are mocked. This verifies real PostgreSQL transactions/RLS, not a live Supabase Auth/PostgREST deployment. CI runs the same tests with PostgreSQL 17 plus frontend lint/typecheck/build, and requires the browser API contract test instead of silently skipping it.
+
+## Deferred milestones
+
+- Further execution reliability: full stage replay, automatic paid retries/refunds and any broader recovery design. M2b1 admits durable jobs and recovers publication only; interrupted paid graphs remain interrupted.
+- Further evidence work: sourced full claims/citations, a generated claim-to-quote matrix, new providers, broader jurisdiction filtering and research workflows.
+- Quality evaluation: labeled retrieval/analysis benchmarks and hallucination/citation checks.
 
 _Built with ❤️ for startup CTOs and inventors who deserve better than $10K/year enterprise tools._
+
+Closure review, exact local Auth/PostgREST setup, browser checks, accounting policy, and publication evidence: [Milestone 1 review](docs/milestone-1-review.md).
+
+M2a behavior, exact disposable database/browser commands, test evidence, and remaining limits: [Milestone 2a review](docs/milestone-2a-review.md).
+
+
+## Release hardening on M3a
+
+The frontend uses stable Next.js 16.4.0 (Active LTS) and React 19.3.0. Install the
+committed lockfile with `npm ci`; lint is an explicit `npm run lint` step because
+Next 16 builds no longer run lint. Runtime dependency advisories, retained tooling
+limitations and exact verification are in [the release review](docs/release-hardening-review.md).
+
+Generated overlap and saved caches validate every record field. Invalid records
+are omitted with visible warnings, without inventing replacement text. Valid legacy
+list caches remain readable; loading, refresh and read retries never generate paid
+results. The results toolbar/cards wrap on mobile and keep actions reachable.
+
+This hardening adds **no migration**. Apply the six cumulative migrations above in
+filename order for a new installation. An existing M3a database needs no schema
+change. Keep the API and the **separate durable worker** running; a frontend-only
+Vercel deployment does not execute queued jobs. See the review for coordinated
+migration/recovery requirements and the unresolved Vercel log-access blocker.
+
+A reproducible synthetic integrated check uses real browser/API/worker/Auth/PostgREST
+and only a disposable local database. No provider credentials are required:
+
+```bash
+python supabase/tests/local_http_setup.py /tmp/patentmapper-release-http
+MILESTONE1_DISPOSABLE_SUPABASE=1 python backend/tests/run_integrated.py \
+  /tmp/patentmapper-release-http/test-config.json /tmp/patentmapper-release-flow
+```
+
+Run from the repository root with backend dependencies, Node 22, Docker, `psql`,
+frontend `npm ci` and Playwright Chromium installed. Both temporary paths must be
+new; generated credentials remain outside git. The runner builds the frontend with
+local public settings, starts/stops its API and worker subprocesses, and tests
+publication, refresh, evidence reopening, one-reservation accounting and account
+isolation. It blocks non-loopback API/worker network connections. Browser fonts are
+blocked too. Stop the disposable stack afterward:
+
+```bash
+npx --yes supabase@2.119.0 stop --workdir /tmp/patentmapper-release-http --no-backup
+```
+
+Rebuild with your intended public settings before using a different environment.

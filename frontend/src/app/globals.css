@@ -561,6 +561,21 @@
 }
 
 /* ---------- results page ---------- */
+/* The results toolbar owns the sticky position; the main nav scrolls normally. */
+body:has(.pm-sticky-bar) .pm-nav {
+  position: relative;
+}
+
+/* Allow saved identifiers and model prose to wrap without clipping their content. */
+.pm-section, .pm-node-panel {
+  overflow-wrap: anywhere;
+}
+.pm-section .pm-chip {
+  white-space: normal;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .pm-sticky-bar {
   position: sticky;
   top: 0;
@@ -583,6 +598,7 @@
   flex: 1;
 }
 .pm-sticky-back {
+  flex-shrink: 0;
   color: var(--text-3);
   cursor: pointer;
   font-size: 13px;
@@ -604,6 +620,7 @@
 }
 .pm-sticky-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
@@ -654,7 +671,7 @@
 /* whitespace */
 .pm-ws-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 .pm-ws-card {
@@ -696,10 +713,15 @@
 }
 .pm-ws-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: start;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+}
+.pm-ws-head .pm-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .pm-ws-eyebrow {
   font-family: var(--font-mono);
@@ -827,7 +849,7 @@
 /* clusters */
 .pm-cluster-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 .pm-cluster {
@@ -844,6 +866,7 @@
 }
 .pm-cluster-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
@@ -951,7 +974,7 @@
   border: 1px solid var(--border);
   border-radius: 14px;
   overflow: hidden;
-  height: 460px;
+  min-height: 460px;
 }
 .pm-graph-grid {
   position: absolute;
@@ -969,10 +992,9 @@
   height: 100%;
 }
 .pm-graph-head {
-  position: absolute;
-  top: 16px;
-  left: 20px;
-  right: 20px;
+  position: relative;
+  padding: 16px 20px;
+  gap: 12px;
   display: flex;
   justify-content: space-between;
   align-items: start;
@@ -980,6 +1002,8 @@
   z-index: 2;
 }
 .pm-graph-legend {
+  min-width: 0;
+  overflow-wrap: anywhere;
   background: rgba(9, 9, 11, 0.6);
   backdrop-filter: blur(8px);
   border: 1px solid var(--border);
@@ -1004,13 +1028,14 @@
   box-shadow: 0 0 8px currentColor;
 }
 .pm-graph-controls {
+  flex-shrink: 0;
   display: flex;
   gap: 6px;
   pointer-events: auto;
 }
 .pm-graph-ctl {
-  width: 28px;
-  height: 28px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1023,9 +1048,17 @@
   font-size: 13px;
   font-family: var(--font-mono);
 }
-.pm-graph-ctl:hover {
+.pm-graph-ctl:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--border-strong);
+}
+.pm-graph-ctl:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pm-graph-ctl:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 
 /* dashboard table */
@@ -1218,4 +1251,21 @@
   height: 1px;
   background: var(--border);
   margin: 0;
+}
+
+/* Results retain the same cards and actions at narrow widths. */
+@media (max-width: 900px) {
+  .pm-sticky-bar { flex-wrap: wrap; }
+  .pm-sticky-left { flex-basis: 100%; }
+  .pm-sticky-meta { flex-shrink: 1; min-width: 0; }
+  .pm-ws-grid, .pm-cluster-grid { grid-template-columns: minmax(0, 1fr); }
+  .pm-section-head { flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+  .pm-section-title, .pm-section-aside { flex-wrap: wrap; min-width: 0; }
+}
+@media (max-width: 600px) {
+  .pm-nav { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
+  .pm-nav-links { flex-wrap: wrap; min-width: 0; }
+  .pm-sticky-bar { padding: 12px 16px; gap: 8px; }
+  .pm-section { padding: 24px 16px 8px; }
+  body:has(.pm-sticky-bar) .pm-btn { min-height: 44px; }
 }

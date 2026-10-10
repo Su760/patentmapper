@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { prepareSubmission, pendingSubmission, confirmSubmission } from "@/lib/submission";
+import { RESULTS_POLLING } from "@/lib/results-config";
 import { createJob } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -35,34 +37,64 @@ function saveJobId(jobId: string): void {
 }
 
 export default function Home() {
+  const { session, loading } = useAuth();
+  return <HomeContent key={loading ? "loading" : session?.user.id ?? "signed-out"} />;
+}
+
+function HomeContent() {
   const router = useRouter();
-  const { session } = useAuth();
-  const [inventionText, setInventionText] = useState("");
-  const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>("all");
+  const { session, loading: authLoading } = useAuth();
+  const owner = session?.user.id;
+  const [previous] = useState(() => owner ? pendingSubmission(owner) : null);
+  const [inventionText, setInventionText] = useState(previous?.invention ?? "");
+  const [jurisdiction, setJurisdiction] = useState<JurisdictionValue>((previous?.jurisdiction as JurisdictionValue) ?? "all");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showLimitModal, setShowLimitModal] = useState(false);
 
+  const requestRef = useRef<AbortController | null>(null);
+  const [uncertain, setUncertain] = useState(!!previous);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, []);
+
   const charCount = inventionText.length;
   const isTooShort = charCount > 0 && charCount < MIN_CHARS;
-  const canSubmit = charCount >= MIN_CHARS && !isLoading;
+  const canSubmit =
+    !authLoading &&
+    !isLoading &&
+    (!session || (charCount >= MIN_CHARS && charCount <= MAX_CHARS));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || requestRef.current) return;
+    if (!session) {
+      router.push("/results/demo");
+      return;
+    }
 
+    const submittedOwner = session.user.id;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const timeout = setTimeout(() => controller.abort(), RESULTS_POLLING.timeoutMs);
+    const current = () => requestRef.current === controller;
     setIsLoading(true);
     setError(null);
 
     try {
+      const submission = prepareSubmission(submittedOwner, inventionText, jurisdiction);
       const { job_id } = await createJob(
-        inventionText,
-        jurisdiction,
-        session?.access_token,
+        submission.invention, submission.jurisdiction, submission.key,
+        session.access_token, controller.signal,
       );
+      confirmSubmission(submittedOwner, submission.key);
+      if (!current() || controller.signal.aborted) return;
       saveJobId(job_id);
       router.push(`/results/${job_id}`);
     } catch (err) {
+      if (!current()) return;
+      setUncertain(true);
       if (
         err instanceof Error &&
         (err as Error & { code?: string }).code === "limit_reached"
@@ -72,11 +104,17 @@ export default function Home() {
         return;
       }
       setError(
-        err instanceof Error
+        controller.signal.aborted ? "Submission timed out. Retry unchanged inputs to recover the same job." : err instanceof Error
           ? err.message
-          : "Failed to connect to backend. Make sure it's running on port 8000.",
+          : "Submission could not be confirmed. Retry unchanged inputs.",
       );
       setIsLoading(false);
+    } finally {
+      clearTimeout(timeout);
+      if (current()) {
+        requestRef.current = null;
+        setIsLoading(false);
+      }
     }
   }
 
@@ -114,6 +152,11 @@ export default function Home() {
             the $500/mo enterprise tools.
           </p>
 
+          {uncertain && <p role="status">
+            An earlier submission is unconfirmed. Submit the same inputs to recover
+            its job without another reservation. Changing inputs starts a separate
+            paid analysis.
+          </p>}
           <form onSubmit={handleSubmit} className="pm-form-shell">
             <div className="pm-form-inner">
               <div className="pm-form-row">
@@ -136,6 +179,7 @@ export default function Home() {
                       type="button"
                       className={`pm-jur${jurisdiction === value ? " active" : ""}`}
                       onClick={() => setJurisdiction(value)}
+                      disabled={authLoading}
                     >
                       {label}
                     </button>
@@ -150,8 +194,8 @@ export default function Home() {
                 onChange={(e) => setInventionText(e.target.value)}
                 maxLength={MAX_CHARS}
                 rows={7}
-                placeholder="A microfluidic device that separates exosomes from whole blood using acoustic..."
-                disabled={isLoading}
+                placeholder={authLoading ? "Checking your session..." : "A microfluidic device that separates exosomes from whole blood using acoustic..."}
+                disabled={authLoading || isLoading}
               />
 
               {isTooShort && (
@@ -240,7 +284,7 @@ export default function Home() {
                     </>
                   ) : (
                     <>
-                      Analyze patents
+                      {session ? "Analyze patents" : "View synthetic demo"}
                       <span style={{ fontFamily: "var(--font-mono)" }}>→</span>
                     </>
                   )}
@@ -248,6 +292,14 @@ export default function Home() {
               </div>
             </div>
           </form>
+
+          {!session && !authLoading && (
+            <p style={{ color: "var(--text-2)", marginTop: 16 }}>
+              The demo is a fixed synthetic sample.{" "}
+              <Link href="/auth">Sign in</Link> to analyze your own invention
+              privately.
+            </p>
+          )}
 
           <div className="pm-stats">
             <div className="pm-stat">
@@ -269,7 +321,7 @@ export default function Home() {
           </div>
 
           <div className="pm-foot-note">
-            No account needed · Results saved in your browser ·{" "}
+            Synthetic demo without an account · Sign in to save private analyses ·{" "}
             <Link
               href="/dashboard"
               style={{ color: "var(--text-3)", textDecoration: "none" }}
@@ -312,7 +364,7 @@ export default function Home() {
                 letterSpacing: "-0.02em",
               }}
             >
-              Monthly limit reached
+              Usage allowance reached
             </h2>
             <p
               style={{
@@ -322,8 +374,8 @@ export default function Home() {
                 lineHeight: 1.55,
               }}
             >
-              You&apos;ve used your 3 free analyses this month. Upgrade to Pro
-              for unlimited searches.
+              Your rolling usage allowance has been reached. Check Pricing for
+              your current limits and remaining usage. Every plan has a finite allowance.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <Link

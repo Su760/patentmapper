@@ -2,7 +2,7 @@
 White Space Analyzer Node
 In:  invention_idea + clusters
 Out: white_space_analysis (markdown with cited gaps)
-Real impl: Groq llama-3.3-70b-versatile with heavy citation mechanics
+Real impl: configured Groq model with heavy citation mechanics
 """
 import logging
 from typing import Any, Dict
@@ -13,7 +13,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
+from app.services.llm import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +44,9 @@ async def whitespace_node(state: LandscapeState, supabase: AsyncClient) -> Dict[
     search_id = state["search_id"]
     logger.info("[whitespace] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "analyzing_gaps"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "analyzing_gaps")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         logger.info("[whitespace] mock mode — returning fake analysis")
         return {"white_space_analysis": MOCK_WHITESPACE}
 
@@ -59,8 +59,8 @@ async def whitespace_node(state: LandscapeState, supabase: AsyncClient) -> Dict[
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> str:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},

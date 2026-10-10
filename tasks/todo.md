@@ -1,21 +1,261 @@
 # Patent Landscape Mapper — Task Tracker
 
-## Current Sprint: Backend Scaffold + Mock LangGraph
+## Staging preparation (2026-10-09)
+
+**Approval:** User approves this bounded implementation, relevant tests, commits/push and updates to existing draft PR #1; record plan and proceed. No merge, manual deploy, production migration, paid calls/resources, Vercel settings/global hooks or M3b.
+**Baseline:** PR #1 and local/remote `release-hardening-m3a` match `6db6050456fefd514ac08b47c68e0062056ced2b`; no newer commits. Reuse clean isolated `/private/tmp/patentmapper-release-hardening`. Original dirty main remains `92b9580`, hash-snapshotted at `/tmp/pm-staging-original-snapshot.json` (86 existing files + already-missing generated tsbuildinfo); no edits there.
+**File boundary:** `tasks/todo.md`; `frontend/src/app/results/[id]/ResultsClient.tsx`; `frontend/src/app/globals.css`; `frontend/src/lib/results-config.ts` for graph bounds/heights; `frontend/tests/release-hardening.cjs` for graph regressions; `docs/release-hardening-review.md`; new `docs/staging-runbook.md`. `tasks/lessons.md` only if corrected by user. A confirmed Vercel repository cause must be documented and its exact files added before editing; absent logs, no guessed configuration patch.
+**Diagnosis/design:** `ResultsClient.tsx:1683-1685` renders three buttons without handlers; `CitationGraphSVG` at :581 uses a fixed 400px SVG without a viewBox. Implement 50–200% centered zoom in configured increments, and an inline expanded graph height with collapse. Keep controls labeled/keyboard-operable, preserve node details, and memoize graph inputs so zoom does not restart the simulation. This is a small interaction fix; no new graph engine, pan gestures or fullscreen modal.
+**Read-only target findings:** Original frontend `.vercel/project.json` identifies `patentmapper` / `prj_tuIqJdi6FeMUNPv870p5yrTZxAVN` / `team_4iAvucq5oMB84DAFG0Un4BIb`; PR bot confirms `su2976`. Current team listing exposes only `code-8ed4`; `whoami --format json` returns `Not authorized`. No blocked deployment-inspect command repeated. No build logs supplied or exposed in PR comments. Local config points to Supabase `poldwmkfuokuvepqftzl` (`PatentMapper`, `INACTIVE` in read-only inventory), not verified non-production, and localhost API. No existing hosted API/worker or separate staging database verified.
+
+- [x] Verify instructions, branch/PR/newer commits, preservation snapshot and existing evidence; identify targets/build configuration read-only.
+- [x] Add failing graph behavior regressions, implement bounded accessible zoom/expand, verify actual scaling/heights/node details and 320/390/desktop layouts.
+- [x] Write concrete staging runbook: target gaps/access action, migration-state checks, variable names, startup/supervision, synthetic acceptance, separate later bounded live validation. Retain development advisories.
+- [x] Run focused browser checks and relevant static/build checks; inspect diff/preservation and prepare publication. Reuse baseline backend/integrated evidence; final pushed commit and CI status are recorded in existing draft PR #1.
+
+**Verification/publication handoff:** Red graph test failed because Zoom in was absent. Six graph/layout tests and 22 relevant results tests passed; actual rendered scaling, disabled bounds, expand/collapse, keyboard/mouse details and 320/390/1280 layout verified. Build/typecheck/lint pass with existing font warning. Independent read-only review found no critical/important issue. Original main snapshot matches exactly (86 existing files + same missing generated cache); no unrelated changes. Final-commit hosted checks and deployment status are recorded in PR #1 after push, not inferred from baseline. No blocked Vercel command retried and no hosted success claimed.
+
+## Release hardening on M3a (2026-10-08)
+
+**Approval:** User explicitly approves planning, implementation, relevant tests, read-only deployment diagnostics, independent read-only review, branch commits/push and a draft PR to main; proceed without routine approval. Never merge, manually deploy, migrate production, call paid providers, change Vercel/global-hook settings or implement M3b.
+**Baseline/isolation:** Local and remote `milestone-3a-evidence-workbench` match `6ca6e0a41e969ef485dfa65db2bbac6404c221b4`. Worktree `/private/tmp/patentmapper-release-hardening`, branch `release-hardening-m3a`. Original dirty main is hash-snapshotted at `/tmp/pm-release-original-snapshot.json` and remains untouched. Existing worktrees/unrelated changes remain untouched.
+**File boundary:** `tasks/todo.md`, `tasks/lessons.md` for user corrections only; `docs/milestone-3a-review.md`, new `docs/release-hardening-review.md`, `README.md`, `CLAUDE.md`; `backend/app/services/evidence.py`, `backend/app/api/routes.py`; overlap/integration tests and fixtures under `backend/tests/`; `frontend/src/lib/api.ts`, `frontend/src/app/results/[id]/ResultsClient.tsx`, `frontend/src/app/globals.css`; `frontend/package.json`, `frontend/package-lock.json`, `frontend/.eslintrc.json` (replace with `frontend/eslint.config.mjs`), `frontend/tsconfig.json`, `frontend/next-env.d.ts`, `frontend/next.config.mjs`, `frontend/src/app/results/[id]/page.tsx`, `frontend/src/lib/auth-context.tsx`, `frontend/src/app/layout.tsx` only for confirmed upgrade compatibility; browser/contract tests under `frontend/tests/`, `frontend/playwright.config.cjs`, new `frontend/playwright.integrated.config.cjs`, `.github/workflows/checks.yml`, `supabase/tests/local_http_setup.py` only for reproducible disposable integration checks. No migration changes. Record any necessary boundary amendment before editing.
+**Root cause:** `backend/app/services/evidence.py:121-136` validates IDs only, allowing null/malformed arrays and fields into generated/saved overlap responses; `frontend/src/lib/api.ts:180-209` trusts JSON casts and `ResultsClient.tsx:955` calls `.map()`. `globals.css:564-610` lays out a single toolbar row and forbids action shrink/wrap; `ResultsClient.tsx:1773,1781` duplicates the overlap notice. `package.json` pins Next/eslint-config-next 14.2.3.
+
+- [x] Verify baseline, instructions and M3a handoff; isolate and record approved boundary/preservation snapshot.
+- [x] Reproduce malformed overlap with failing regressions; validate complete generated/cache record and envelope shapes, visible exclusions, free legacy reads and defensive client rendering without automatic paid replacement.
+- [x] Consult current official support/security/upgrade guidance; install a supported patched stable Next.js (prefer Active LTS), compatible React/tooling; review installed dependency advisories and preserve auth/private-cache/cancellation/idempotency behavior.
+**Upgrade boundary amendment:** Add `frontend/src/app/page.tsx`, `frontend/src/app/dashboard/page.tsx`, `frontend/src/app/pricing/page.tsx`, and `frontend/src/lib/use-usage.ts` for confirmed Next 16 ESLint compatibility: new hook rules reject effect-driven account resets/render-time ref assignment, and internal home links need Link. Use keyed account components and scoped usage state to preserve immediate privacy reset, cancellation and submission-key recovery; retain all existing regressions. No lint rules disabled or severities weakened.
+
+**Layout diagnosis refinement:** Full-page long-content regressions fail at 320/390/1280: toolbar extends to 513–518px, nav extends to 371px at 320, and unbreakable cluster/overlap text forces 1fr grid intrinsic widths beyond 1800px. Fix wrapping/minmax constraints in the already bounded results CSS; include nav wrapping because it appears on the results page. No clipping added. Expanded graph fixtures exposed unbounded legend text in an absolute header; wrap it in normal flow so panel height can grow. Screenshot assertions also reproduced 118px-tall compressed badges and overlapping sticky nav/toolbar; badges retain natural width and only the results toolbar stays sticky on this page.
+
+- [x] Reproduce/fix toolbar overflow and duplicate notice; verify entire results page, long content and usable actions at 320/390/desktop with browser regressions and screenshots.
+- [x] Run complete existing backend/SQL/Auth/browser checks plus local browser → API → separate worker → disposable database → saved result flow, refresh/reopen/account isolation; no paid calls.
+- [x] Inspect available Vercel failure logs read-only; fix only confirmed in-scope repository causes or record exact access blocker. Obtain independent read-only review and fix confirmed findings with regressions.
+- [x] Update cumulative release/migration/worker handoff with exact checks/limitations; verify preservation/boundary/secrets, commit/push, create draft PR targeting main and inspect hosted implementation CI. Record the final commit's CI status in the PR handoff.
+
+
+**Final local evidence:** 94 backend tests passed with zero skips; 43 frontend checks (36 Chromium + 7 Node) passed; real integrated browser/API/separate-worker/disposable-Auth/PostgREST publication, refresh, reopening and isolation passed. Next 16.4.0 / React 19.3.0 production build, lint, typecheck and clean install pass. Production audit: 0; full audit: 9 development entries (7 high/2 moderate). Independent review finding (dashboard stale error after same-owner token refresh) fixed with a red/green browser regression. Exact commands, screenshots, limits and Vercel log-access errors are in `docs/release-hardening-review.md`.
+
+**Preservation check:** Original main remains at `92b9580`; 86 of 87 snapshotted files are byte-identical, no new files. The generated `frontend/tsconfig.tsbuildinfo` is now missing from the original tree; attribution is unconfirmed and the file is left untouched. No source or unrelated user changes were overwritten. Asked whether this was part of external disk cleanup; publication work continues independently.
+
+**Publication:** Implementation `c864002ecd57717bb13945945b219706d302289c` pushed on `release-hardening-m3a`; [draft PR #1](https://github.com/Su760/patentmapper/pull/1) targets `main` and explains cumulative M1–M3a, migration order and the separate worker. Both GitHub jobs passed in [run 37828185542](https://github.com/Su760/patentmapper/actions/runs/37828185542), including the integrated synthetic flow. The new Vercel deployment failed with the same confirmed log-access blocker. Final commit CI is checked separately and recorded in the PR, not inferred from the implementation run. No merge, manual deployment, production migration or paid call.
+
+**CI re-plan (same boundary):** Hosted runs at documentation commit `b5838df` both exposed a real auth-initialization input race: `frontend/src/app/page.tsx:41` changes the form key from loading to owner, while `:197` lets users type before auth is ready. The remount loses that text; existing submission tests then time out at a disabled submit button. Add a deterministic delayed-session regression in `frontend/tests/release-hardening.cjs`, disable invention/jurisdiction entry until auth resolves, retain all existing account-switch/idempotency regressions, and recheck the new final commit. No timeout increase, forced click or test-only workaround.
+
+**CI correction verified:** The delayed-session regression failed before the fix, then all 43 frontend checks passed. Three initialization/submission/account-switch tests passed nine executions; build/typecheck/lint and a fresh integrated real-process flow passed again. Independent read-only review found no blocking issue. Exact final-commit hosted status is recorded in PR #1 after the correction is pushed; prior b5838df browser failures remain documented.
+
+
+## M3a: persisted evidence and read-only workbench (2026-10-04)
+
+**Approval/spec:** User request approves planning, implementation, relevant tests, independent read-only review, branch commits/push and hosted CI at the final commit; proceed without routine approval. Base/remote verified `85fc0f1df64efe3a2bc008e7362ddf94aa38e8e5`; isolated `/tmp/patentmapper-m3a`, branch `milestone-3a-evidence-workbench`. Original main: 86 files hash-snapshotted outside git. No merge/deploy/production migrations/live paid calls/new providers/full-text claims scraping/paid retries/refunds/stage replay/Vercel/global-hook changes. Generated claim-to-quote matrix deferred.
+
+**Goal:** Owners inspect exact saved retrieval text and its provenance while source facts, unknown history and model inference remain distinct.
+**Architecture:** Evidence v1 is a per-patent JSON document with an observations array. Each observation records provider and raw provider record ID separately from an actually supplied publication identifier, source URL, retrieval time, matched queries, exact text/type/language, separately typed priority/filing/publication dates, requested jurisdiction, submitted provider filter and limitations. Internal patent IDs are provider-qualified; dedup only within a provider record, preserving every distinct observation. No inferred cross-provider identity. Empty/missing metadata stays null. Versioned evidence and analysis warnings travel through the existing fenced checkpoint/atomic publication into RLS-protected saved rows. A free authenticated GET supplies the workbench plus safe legacy handling; reads never invoke models/providers. Existing result UI consumes saved evidence to validate displayed IDs and source links, suppresses legacy/unsupported trends, labels overlap and relationships as inference.
+
+**Compatibility decision:** New execution inputs use version 2. Forward migration upgrades only queued v1 inputs (no execution occurred), marks running v1 work interrupted during a coordinated stop, and preserves finalizing v1 snapshots for provider-free legacy publication. Worker fails unsupported versions without providers. Historical results and recovered old snapshots retain null evidence; no provenance backfill. All rollout processes must be stopped before migration. Unknown future evidence versions are displayed as unsupported, never reinterpreted as v1.
+
+**File boundary:** `tasks/todo.md`, `tasks/lessons.md` only for corrections; `README.md`, `CLAUDE.md`, new `docs/milestone-3a-review.md`; new `supabase/migrations/202610040002_evidence_workbench.sql`; `backend/app/services/patent_api.py`, new `backend/app/services/evidence.py`, `backend/app/services/jobs.py`, `backend/app/worker.py`, `backend/app/agents/state.py`, graph nodes `fetcher.py`, `deduplicator.py`, `clusterer.py`, `reporter.py`, `backend/app/api/routes.py`; focused regressions/fixtures under `backend/tests/`; `frontend/src/lib/api.ts`, `frontend/src/lib/demo.ts`, new `frontend/src/components/EvidenceWorkbench.tsx`, `frontend/src/app/results/[id]/ResultsClient.tsx`, focused browser tests under `frontend/tests/`; `.github/workflows/checks.yml` / `supabase/tests/local_http_setup.py` only if necessary for reproducible verification. No edits to original main or existing historical migrations.
+
+**Diagnosis:** `patent_api.py:119-143,210-224` conflates IDs, snippets and fallback dates; `deduplicator.py:24-31` discards repeated observations; `clusterer.py:154-191` retains arbitrary model IDs; `reporter.py:180-188` accepts unchecked endpoints; migration 5 finalizer persists only six patent fields; results graph creates nodes for unchecked links and constructs Google URLs from provider IDs. Current Lens docs also specify abstract arrays (not only strings); parser coverage must include both without changing saved exact text.
+
+- [x] Verify remote/instructions, isolate worktree, read M2b review, record plan/boundary and preservation snapshot.
+- [x] Task 1 — deterministic provider/parser tests first: Lens arrays/string/absent abstracts, Serp snippets/title-only, absent publication IDs, typed dates, requested jurisdiction/unsupported Lens filtering, repeated-query observations and cross-provider collisions. Implement evidence v1 and conservative dedup. Use official provider docs, no paid calls.
+- [x] Task 2 — tests for unknown cluster members/relationship endpoints, duplicate/malformed IDs, deterministic visible exclusions and inferred links; validate before downstream analysis and again before checkpoint. Suppress unsupported filing metrics. Label claims model input/output as inference from saved text, filter structured claim IDs against evidence.
+- [x] Task 3 — forward migration and worker/read API tests: evidence round trip, exact text, transaction rollback, stale fences, checkpoint restart, v1 queued/running/finalizing compatibility, unknown evidence versions, owner/foreign/anonymous/legacy RLS and zero paid calls. Preserve original M1/M2 tests; update only fixtures whose execution contract changed.
+- [x] Task 4 — owner workbench search/select/exact-text/provenance/source UI and synthetic/legacy displays; source-aware graph links, conservative legacy graph filtering, overlap labels. Desktop/mobile browser checks including reopen/search with zero paid requests; lint/typecheck/build.
+- [x] Task 5 — full mocked + disposable PostgreSQL + disposable Supabase Auth/PostgREST + frontend suites. Independent fresh-context read-only review; fix confirmed defects with regression tests. Document exact commands, results, limitations and migration strategy.
+- [x] Task 6 — verify original hashes/file boundary/secrets, commit and push only M3a, inspect hosted CI at final commit; no merge/deploy.
+
+**Review focus:** IDs shared across providers never merge; observations with different query/time/text never disappear; legacy finalizing snapshots remain publishable without invention of provenance; malformed/unknown model IDs cannot become graph evidence; account switch/reopen/search cannot expose prior-owner data or trigger paid calls. Verify all five with deterministic fixtures and real DB/browser checks.
+
+**Review progress:** Independent read-only review identified malformed legacy cluster rendering, silently discarded malformed member/claim lists, lost title-only Lens language, and unsearchable legacy text. Confirmed fixes remain within this boundary; regressions reproduce the title/language and historical-text failures. Browser response-shape validation also fixes the existing M1 fixture's unexpected-response crash. A whole-page mobile width assertion exposed existing `globals.css:605` toolbar overflow; only toolbar buttons exceed the viewport. Leave that adjacent layout unchanged; verify the new evidence panel and all its children fit at 390 px, and document the original failure.
+
+**Final local verification:** 89 backend tests passed with zero skips (47 mocked/contract, 32 real PostgreSQL including process recovery, 10 real Supabase Auth/PostgREST). Frontend: 30 tests passed (23 Chromium, 7 Node), lint/typecheck/build passed. Four confirmed independent-review findings fixed. Exact commands, failing development outputs, coverage/version contract, migration and limitations are in `docs/milestone-3a-review.md`. Mobile workbench fits; existing toolbar overflow remains explicitly deferred. Published implementation `831420c`; hosted Checks run `37265506951` passed both jobs. Original dirty main: all 86 snapshot hashes unchanged. Final documentation-only commit CI is reported in the handoff. Vercel automatic preview reports failure; diagnosis remains deferred. No merge/deploy/production migration or Vercel/global-hook change was performed.
+
+## M2b1: durable admission and safe restart handling (2026-10-04)
+
+**Approval/spec:** The user's M2b1 request explicitly approves planning, implementation, tests, commits/push and final-commit CI without another routine approval pause. Base verified remotely at `668b628`. Worktree: `../patentmapper-worktrees/milestone-2b-durable-jobs`, branch `milestone-2b-durable-jobs`. Original dirty main is hash-snapshotted and untouched. No merge/deploy/production migrations/live paid calls/Vercel/global-hook changes.
+
+**Goal:** Commit accepted analyses as durable queued inputs, admit duplicates once, and recover only provider-free publication; never silently replay interrupted paid execution.
+**Stack/design:** Keep FastAPI, Supabase/Postgres, LangGraph and Next.js. A private `analysis_queue` table and service-only RPCs provide transactional admission, owner/key uniqueness, atomic claims and expiring UUID lease tokens. Existing quota ledger/lock stays authoritative. Queue inputs snapshot normalized invention/jurisdiction, pipeline version, model, mock mode and fallback setting; credentials remain runtime-only. A separate `python -m app.worker` executes jobs with configured per-process/global concurrency, heartbeat and timeouts. Every graph stage/status/checkpoint/publication is fenced; paid boundaries check the lease before calls. Existing per-provider retry/semaphore bounds remain unchanged.
+
+**Recovery contract:** queued → running → finalizing (complete output durably stored) → completed/insufficient_evidence. Expired running → interrupted, never requeued. Expired finalizing may be reclaimed with a new fence to publish only the immutable saved output. Errors before checkpoint are failed/interrupted and consume the original reservation; uncertain checkpoint/publication responses never rerun the graph. Legacy processing rows have no queue entry and are explicitly interrupted by the migration; stop old API/background processes before migration. A process crash after paid output but before its checkpoint remains interrupted. No exactly-once external execution promise.
+
+**Fencing:** revoke service execution on the legacy `finalize_analysis` RPC; call it only inside the new fenced publication RPC. Deny direct service-role writes to durable searches/results/patents (except cached claims updates); allow audited SECURITY DEFINER RPCs to write after checking current, unexpired token. Queue mutations are RPC-only. Browser roles cannot access queue/checkpoints or execute worker/admission functions; existing owner RLS protects public results. Lease expiry is checked in the database after locking, never renewed from an already expired lease.
+
+**File boundary:** `tasks/todo.md`, `tasks/lessons.md` only for corrections, `README.md`, `CLAUDE.md`, `.env.example`, `docs/milestone-2b1-review.md` (new); `supabase/migrations/202610040001_durable_jobs.sql` (new); `backend/app/api/routes.py`, `backend/app/core/config.py`, `backend/app/services/{usage,llm,patent_api}.py`, new `backend/app/services/{jobs,execution}.py`, new `backend/app/worker.py`, `backend/app/agents/{graph,state}.py`, the six existing graph nodes for fenced stage/config access; backend regression fixtures/tests under `backend/tests/`; `frontend/src/lib/{api,poll-job,results-config}.ts`, new `frontend/src/lib/submission.ts`, `frontend/src/app/page.tsx`, `frontend/src/app/results/[id]/ResultsClient.tsx`, `frontend/src/app/dashboard/page.tsx`, frontend tests under `frontend/tests/`; `.github/workflows/checks.yml` and `supabase/tests/local_http_setup.py` only as needed for reproducible integration checks. No unrelated cleanup/provider removal or original-worktree edits.
+
+**Root causes:** `routes.py:149-175` currently reserves quota, inserts a search and schedules in-process work separately. `_run_graph` only keeps completed graph output in memory before publication. Nodes update status directly; the old finalizer is unfenced. Browser submission has no stable retry key; polling treats only `processing` as active.
+
+- [x] Verify remote tip/instructions/worktree, snapshot dirty main, inspect M2a persistence/security paths; record this approved plan and boundary.
+- [x] Task 1 — admission: write failing SQL/API tests for rollback, owner/key replay/conflict, concurrent duplicate/last-unit admission and lost response; implement `admit_analysis` plus authenticated POST using required UUID `submission_key`. Assert one queue/search/reservation and zero API-process provider calls. Preserve M1 authorization/quota regressions with the new required key.
+- [x] Task 2 — worker/recovery: write failing SQL and real process tests for competing claims, heartbeat/expiry, stale writes, kill/restart and checkpoint/publication recovery. Implement claim/heartbeat/stage/checkpoint/fail/publish RPCs, worker loop, execution snapshots and paid-boundary guards. Reuse M2a transactional publication assertions through the fenced path, with lost responses and rollback retaining checkpoints. Deny the legacy RPC and direct service-role bypasses.
+- [x] Task 3 — browser: write failing tests for uncertain-submission retry with the same owner/payload/key, changed payload/new owner, queued/running/finalizing/interrupted displays and free status retry. Persist uncertain submission in owner-scoped session storage (in-memory fallback), clear only on definite success; explicit fresh submission uses a new key. Extend existing cancellable bounded polling and dashboard states without auto-generating paid work.
+- [x] Task 4 — verify/review: run complete M1/M2a/new mocked suites, actual disposable PostgreSQL and Auth/PostgREST, process-kill tests with mocked providers, frontend lint/typecheck/build/browser checks. Obtain the executing-plans skill's read-only final review; primary fixes confirmed in-scope defects. Record exact results and any NOT RUN checks.
+- [x] Task 5 — handoff: document migration order, separate API/worker startup, failure/recovery/accounting semantics and rollback limits; inspect relevant-only staged diff/secrets and original-worktree hashes, commit/push, inspect hosted CI at final commit and fix caused failures.
+
+**Status refinement:** Free owner-checked status reads mark an expired running lease interrupted using the database clock, including when workers are offline. Dashboard monitors active rows with the same bounded cancellable status poller. Service triggers also guard deletion and moving durable result rows to prevent stale-client bypasses.
+
+**Review focus/tests:** commit-then-lost-response admission must dedupe even if current settings change; zero lease renewal after expiry or stale token; pending output must survive publication failure with no paid rerun; browser retry/account switch must not create duplicate paid work; legacy processes/RPCs must not publish unfenced durable results. Rulings: existing global quota lock also serializes duplicate admission (small-volume correctness over new infrastructure); only complete output, never individual stages, is recoverable; no key expiry while its job exists. Administrative deletion removes job/key but never refunds usage.
+
+**Local verification:** 72 backend tests passed with zero skips (34 mocked/contract, 29 real PostgreSQL including worker-process checks, 9 actual Auth/PostgREST); 24 frontend tests passed (17 Chromium + 7 Node), lint/typecheck/build passed. Independent read-only review closed the ownerless-migration, invalid-checkpoint/fairness, dead-worker status and direct-service bypass findings. Original dirty main: all 86 snapshot hashes unchanged. Full commands, policies, migration/startup and limitations are in `docs/milestone-2b1-review.md`. Published application commit `cbb1ea1` on `milestone-2b-durable-jobs`; Checks run `37187110777` passed both hosted jobs (63 main backend/SQL + 9 Auth/PostgREST + 24 frontend tests and build/checks). Final documentation-commit CI is inspected before handoff. Vercel automatic preview reports failure; diagnosis remains separately deferred. No merge/deploy/production migration or hook changes.
+
+**Deferred:** full stage replay, automatic paid retries/refunds, new providers, evidence workbench and quality evaluation. Vercel diagnosis/global hooks remain separate. The old M2a review remains historical.
+
+## Targeted M1 follow-up and M2a: reliable saved results (2026-10-03)
+
+**Approval:** User explicitly approved this plan and implementation/commit/push, without another approval pause. Start in the clean `milestone-1-private-bounded` worktree at published `6863af2`; leave the original dirty main and unpublished tests/work byte-for-byte untouched. Push the focused M1 fix first, verify checks, then create an M2a branch from that updated tip. No merge, deployment commands, production migrations, Vercel settings, or global-hook changes.
+
+**A file boundary:** `backend/app/api/stripe_routes.py`, `backend/tests/test_checkout.py` (new), `frontend/src/lib/api.ts`, `frontend/src/app/page.tsx`, relevant browser/API tests, `tasks/todo.md`, `tasks/lessons.md`.
+**A diagnosis:** `stripe_routes.py:40-51` verifies identity but never excludes anonymous users before Stripe. `page.tsx:283` and the limit modal retain obsolete guest/monthly promises; checkout API errors are replaced with a generic status string.
+
+- [x] Add failing mocked-Stripe regression; reject anonymous checkout with permanent-account guidance, retain registered checkout, correct homepage copy and propagated checkout errors.
+- [x] Run M1 regressions/frontend checks; inspect relevant staged diff and secrets; commit/push M1 and inspect hosted checks.
+- [x] Create M2a branch from updated M1 tip (`9431701`); hosted M1 Checks run `37106987775` passed both jobs. New branch: `milestone-2a-reliable-saved-results`.
+
+**M1 follow-up local verification:** 22 mocked backend/API tests passed; two database classes skipped locally for this focused run and assigned to hosted PostgreSQL/Auth jobs. Frontend lint/typecheck/build and three Chromium checks passed. Anonymous regression changed from `200 != 403` to passing; registered checkout returns its mocked URL with one Stripe call, anonymous/missing credentials make zero Stripe calls.
+
+**B file boundary:** `backend/app/api/routes.py`, `backend/app/agents/graph.py`, `backend/app/agents/state.py`, relevant nodes (`fetcher.py`, `deduplicator.py`, `reporter.py`), `backend/app/services/patent_api.py`, new finalization service if needed, `backend/app/core/config.py` / `.env.example` only for required configured bounds; new forward migration under `supabase/migrations/`, backend regression/SQL/Auth tests under `backend/tests/`, `frontend/src/lib/api.ts`, `frontend/src/lib/demo.ts`, `frontend/src/app/results/[id]/ResultsClient.tsx`, `frontend/src/app/dashboard/page.tsx`, focused polling helper/config under `frontend/src/lib/`, browser tests under `frontend/tests/`, `.github/workflows/checks.yml`, `README.md`, `CLAUDE.md`, `tasks/todo.md`, `docs/milestone-2a-review.md`.
+**Design:** Save final report separately from gap analysis. Load cached claims via authenticated GET, with explicitly charged generation/regeneration. Show persisted stages using one sequential, cancellable, bounded polling loop with visible failures/retry. Preserve provider semaphore and finite retries while distinguishing failure, successful empty, and partial retrieval. Skip conclusion-generating nodes when no usable patents remain. A service-only database finalization RPC locks the search and atomically writes report/results/patents plus terminal status; repeat finalization of a successfully published terminal search is a no-op, preserving cached claims and avoiding duplicates. Legacy reports remain unavailable, never regenerated on read. A failed finalization may be retried through the service-only RPC with the retained result payload; failed is not an immutable published snapshot. This adds no automatic retries or recovery.
+
+- [x] Confirm full pipeline/persistence/browser call paths; write failing regressions for report round trip, retrieval outcomes, cached reopening, polling errors/cleanup, atomic rollback/retry.
+- [x] Implement retrieval outcome propagation, guarded downstream analysis, atomic finalization migration/service, and saved-report behavior.
+- [x] Implement cached claims, explicit usage actions, honest legacy report state, persisted-stage polling and coverage warnings with account isolation.
+- [x] Run M1/new mocked tests, disposable SQL/Auth/PostgREST tests, frontend checks/build and browser regressions; obtain independent read-only persistence/failure review and fix confirmed defects.
+- [x] Complete M2a review with exact test results/migrations/limits; inspect/stage relevant changes, commit/push M2a, inspect hosted CI. Application `5a4ffd0` is pushed; Checks run `37109210348` passed both jobs (45 mocked/PostgreSQL tests plus seven actual Auth/PostgREST; 19 frontend checks and lint/typecheck/build). `docs/milestone-2a-review.md` contains the full handoff.
+
+**Verification:** 52 backend tests passed without skips (30 mocked, 15 actual PostgreSQL, seven actual local Supabase Auth/PostgREST). Frontend lint/typecheck/build and 19 Playwright-run checks passed (13 Chromium, six deterministic Node). Independent backend/frontend reviews closed all confirmed findings; migration 4 was applied only to disposable databases. Original main preservation hashes matched every code/test file; one original review document gained two blank lines immediately after the baseline snapshot (source unconfirmed), left untouched and excluded. Details in `docs/milestone-2a-review.md`.
+
+**Deferred:** durable queues, restart recovery, automatic paid retries, new patent providers, evidence workbench and quality evaluation. Vercel preview diagnosis remains separate. Existing M1 atomic admission and conservative failed-attempt accounting remain unchanged.
+
+## Milestone 1 closure review and review branch (2026-10-02)
+
+**Approval:** The user explicitly approved this bounded review/fix/handoff, including a feature-branch commit/push and hosted CI inspection. This supersedes the earlier no-commit/no-push instruction for relevant milestone-1 work only. No merge, deployment, production migration, hook changes, or milestone 2.
+**Plan / file boundary:** Preserve the dirty-tree baseline and its existing tests. Review backend and frontend with two read-only reviewers; the primary fixes confirmed milestone-1 defects only. Authorized edit paths: the milestone-1 boundary below, `tasks/lessons.md`, `docs/milestone-1-review.md`, new usage-status migration and database/security test files under `supabase/` and `backend/tests/`, browser regression tests under `frontend/tests/`, and frontend quota/error consumers (`src/components/Navbar.tsx`, `src/components/NavBar.tsx`, `src/lib/auth-context.tsx`) only where confirmed necessary. Use an isolated publish worktree if needed to exclude unrelated prior telemetry/export/UI changes. Record any necessary dependency inclusion before staging.
+
+- [x] Reconcile branch, index, dirty files, prior snapshot and 54-test post-change evidence (32 is historical baseline).
+- [x] Obtain independent backend/frontend findings with file/line evidence. Confirmed accounting/plan/failure-state defects, ideation concurrency indicators, and malformed JSON preceding credential validation.
+
+**Publication dependency boundary:** The isolated branch includes the existing configured-Groq helper/configuration and helper call sites in four nodes, plus its regression test: these are required to preserve the working model configuration used by milestone routes. It excludes telemetry/graph instrumentation, intelligence exports, provenance metadata/UI/styles, unused provider deletion, local settings and driftlens data. Existing local tests stay intact; milestone tests use independent `backend/tests/security_fixtures.py`. Include `supabase/tests/local_http_setup.py` for reproducible disposable Auth/PostgREST CI.
+
+**Closure boundary amendment:** Add `frontend/src/lib/use-usage.ts` and `frontend/src/components/UsageSummary.tsx` to share verified accounting and scoped error handling; add `frontend/tests/milestone1-ui.cjs` and `backend/tests/test_usage_status.py` / `test_supabase_http.py` plus test fixtures for reproducible checks. Also include `frontend/playwright.config.cjs`, `frontend/package.json`, `frontend/package-lock.json`, and frontend test-artifact ignores for reproducible browser tests and CI. All are within the approved closure scope.
+
+- [x] Fix authoritative rolling reservation usage display and visible ideation failures/loading; add regressions and fix confirmed security defects.
+- [x] Run mocked tests, real PostgreSQL checks, disposable Supabase Auth/PostgREST checks, frontend checks/build; distinguish evidence and unavailable checks.
+- [x] Inspect safe redacted hook runtime evidence separately; leave global hooks unchanged. Codex Stop echo emits plain text: safe standalone execution exits 0 but JSON parsing fails at line 1 column 1. The engine event from the prior turn was not retained in inspected logs; no full hooks executed.
+- [x] Complete `docs/milestone-1-review.md` with migration order, accounting policy, results and deferred milestones.
+- [x] Inspect a relevant-only staged diff and credentials exclusions, commit/push a feature branch, inspect hosted CI and address caused failures. Application commit `99f5163` is pushed; Checks run `37098127161` passed both jobs. No application-CI failures. Existing Vercel Git integration reports a failed automatic preview; deployment log access is blocked by account scope. No deployment settings changed.
+
+**Closure verification:** Original worktree: 65 backend tests passed, including all original tests. Isolated review branch: 34 tests passed with no skips (19 mocked, 10 actual PostgreSQL, five actual Auth/PostgREST). Both frontend production builds passed; branch lint/typecheck and three Chromium regressions passed. Migration 3 and the new tests fix the two previously deferred accounting/ideation gaps. Full findings, setup commands, failures during development, reservation policy and hook evidence are in `docs/milestone-1-review.md`. Hosted Checks passed (29 backend/SQL tests with the separate Auth class skipped there, five Auth/PostgREST tests in its own job, three Chromium tests, lint/typecheck/build). The review worktree is `/tmp/patentmapper-m1-review` on `milestone-1-private-bounded`; original main remains dirty and preserved.
+
+## Milestone 1: Private, bounded analyses (2026-10-02)
+
+**Goal:** Implement only the user's requested private, bounded analyses milestone on the current dirty checkout. Preserve the existing stack and local changes. No commit, push, deployment, or production migration.
+**Approval:** User explicitly approved implementation of this plan on 2026-10-02; includes local/test database integration checks with mocked external providers. No further approval needed for this scope.
+**Architecture:** Validate every supplied credential with Supabase Auth; share an owner-filtered job lookup across status, cached claims, claims generation, and ideation. Verified anonymous users own their jobs and receive free-tier limits; signed-out visitors can view only a fixed synthetic demo. Never adopt legacy ownerless records. Reserve usage before any paid work through a service-only Postgres RPC with transaction locking, finite per-user operation limits (free and Pro), and a finite global budget across operations. Fail closed on storage/subscription errors. Reservations are consumed even if later work fails, avoiding retry/refund races.
+**File boundary:** `tasks/todo.md`, `CLAUDE.md`, `README.md`, `.env.example`; `backend/app/api/routes.py`, `backend/app/api/stripe_routes.py`, `backend/app/core/config.py`, `backend/app/core/security.py` (new), `backend/app/services/usage.py` (new), `backend/app/services/patent_api.py`, `backend/requirements.txt`; `backend/tests/test_private_analyses.py` (new), `backend/tests/test_milestone1_sql.py` (new), `backend/tests/test_pipeline_baseline.py`; `supabase/migrations/202610020001_private_analyses.sql` (new), `supabase/migrations/202610020002_bounded_usage.sql` (new), `supabase/tests/bootstrap.sql` (new); `.github/workflows/checks.yml` (new); `frontend/src/lib/api.ts`, `frontend/src/lib/demo.ts` (new), `frontend/src/app/page.tsx`, `frontend/src/app/dashboard/page.tsx`, `frontend/src/app/pricing/page.tsx`, `frontend/src/app/results/[id]/ResultsClient.tsx`. Changes elsewhere require a scope amendment.
+
+- [x] Inspect repository instructions, HEAD/branch/status, local changes, full authorization/provider/persistence/browser paths, and current vendor docs. Confirm root causes and stale docs against checkout.
+- [x] Add failing offline HTTP regression tests for owner access, missing/malformed/invalid/expired/cross-user credentials, ownerless jobs, verified anonymous owners, validation, provider non-invocation, quota failure, and concurrent admission.
+- [x] Implement shared credential/ownership validation, fail-closed atomic usage reservations for jobs/claims/ideation, configured finite quotas and input limits, and remove Lens header logging. Keep service credentials server-only.
+- [x] Add reproducible schema/ownership/quota migrations and isolated local Postgres tests exercising real concurrent transactions, service-only RPC privileges, owner/anonymous RLS reads, and denied browser writes. Do not use production databases.
+- [x] Wire browser credentials into all private operations, expose deterministic signed-out demo behavior, stop treating localStorage UUIDs as guest access, and correct unlimited pricing language.
+- [x] Add CI for backend regressions, isolated SQL tests, frontend lint/typecheck/build; run checks locally and inspect the final changes against the original dirty tree.
+- [x] Update docs/setup instructions and this checklist with results, limitations, and deferred milestones.
+
+**Post-change validation (separate from the original 32-test baseline):** 54 tests passed with no skips, including all original tests, 13 HTTP/browser-contract security regressions, and 9 real PostgreSQL integration tests. Ran both in the original virtual environment (52 tests before the last two hardening regressions) and a fresh Python 3.13 environment installed from `backend/requirements.txt` (final 54 tests). Fresh-environment `app.main` import passed. Frontend lint/typecheck/production build passed with the existing font/auth-hook warnings and outdated Browserslist data; CI YAML parsed. Chromium verified signed-out home → demo, fixed claims/ideation, dashboard ignoring legacy localStorage IDs, and private-link denial, with zero private API/database requests.
+
+**Real database evidence:** Applied migrations only to a new temporary PostgreSQL 18.1 cluster listening on a private Unix socket and a disposable `patentmapper_m1_test` database. Browser roles could read their own rows but not another user's or legacy ownerless rows, and could not insert/update/delete searches/results/patents. API owner reads/claims generation succeeded; foreign/ownerless status/claims/ideation returned 404 with no providers invoked. For each paid operation, eight concurrent HTTP requests using separate real SQL transactions with one unit left admitted exactly one and rejected seven. Renaming the quota or subscription table caused 503 with no model/patent/background work. Also verified service-only RPC access, global admission across users/operations, budget retention after account deletion, finite Pro/anonymous limits, expired Pro behavior, replacement of permissive old policies, and idempotent historical usage seeding without ownership adoption.
+
+**Preservation:** HEAD remains `92b9580` on `main`. Compared hashes against a snapshot taken before implementation; existing files outside the approved boundary are byte-for-byte preserved, including earlier graph/provider refactors, telemetry/export work, all other tests, and existing UI changes. The original 32 tests remain; two job-submission fixtures now supply an authenticated identity and a valid-length invention. No commit, push, deployment, production migration, or approval/hook changes.
+
+**Required setup:** Install updated backend requirements (adds the already-used Stripe SDK), apply the two checked-in migrations in filename order to development/test using an administrative migration role, configure the server-only service/provider keys and finite usage settings from `.env.example`, and use `NEXT_PUBLIC_API_URL=http://localhost:8000/api` plus only the public Supabase URL/anon key in the browser. Configure magic-link callback allowlisting. Review existing policies before applying migration 1 because it replaces policies on the four protected tables. Do not apply `supabase/tests/bootstrap.sql` to an application database. Exact commands are in README.
+
+**Unverified / remaining limitations:** Hosted GitHub CI has not run (local equivalent passed); real Supabase Auth/PostgREST and live-provider end-to-end validation remain unrun. Auth and external providers are mocked in the SQL harness; the actual authorization queries, quota function, locks, tables, and database roles are real. Operation allowances bound admissions rather than exact dollar cost; failed work conservatively consumes reservations. The frontend does not provision new anonymous accounts; verified existing anonymous sessions are accepted. Legacy ownerless data stays hidden. Job recovery/report/evidence/evaluation limitations remain deferred. `backend/app/api/stripe_routes.py:84` still displays searches-based usage rather than consumed reservations, and `frontend/src/app/results/[id]/ResultsClient.tsx:1066` still logs ideation errors without displaying them; these adjacent issues are reported, not fixed.
+
+**Separate stop-hook JSON issue:** Not reproduced in this runtime. Read-only inspection found valid global settings JSON and a Stop hook emitting syntactically valid JSON (`~/.claude/settings.json:373`); the other Stop script parses input and silently catches errors (`~/.claude/hooks/on-stop.js:18`). No hooks were executed manually, disabled, or edited, and no approval rules were changed. The reported hook/runtime mismatch remains unverified and outside this milestone.
+
+**Verified discrepancies:** `CLAUDE.md` describes Gemini, auth excluded from v1, and a state/schema missing current jurisdiction/citation/claims fields; implementation uses configurable Groq plus magic-link auth and billing/claims/ideation. Google OAuth is not implemented in this checkout. README incorrectly promises anonymous UUID access, unlimited Pro, unauthenticated Lens access, and react-force-graph-2d (current graph uses SVG). Historical task sections describe an earlier audit/export scope; they remain historical, not the current implementation boundary.
+**Instruction availability:** The session-referenced `~/.Codex/rules/ui-ux-pro-max/AGENTS.md` is absent. Preserve the current visual design; frontend changes are limited to security, credentials, error states, and explicit demo/quota text.
+
+### Deferred milestones (out of scope)
+
+- [x] M2a saved results: report persistence, cached claims, persisted stages, retrieval failure semantics and atomic finalization (see current plan above).
+- [x] M2b1: durable admission, owner-scoped submission idempotency and safe restart handling (current plan above).
+- [ ] Further execution reliability: full stage replay and automatic paid retry/refund design.
+- [ ] Evidence workbench: sourced claims/citations, provenance and jurisdiction fidelity, evidence review/export workflows.
+- [ ] Quality evaluation: retrieval/analysis benchmarks, labeled evaluation sets, hallucination/citation checks.
+
+## Infrastructure Audit and Phase 1 Plan (2026-09-05)
+
+**Goal:** Measure the existing pipeline and establish offline regression evidence without changing research, billing, mock-mode, or provider-disable behavior.
+**Architecture:** Keep the six-node graph, FastAPI background tasks, and Supabase. Add a structured timing wrapper at graph registration and deterministic offline characterization tests.
+**Tech stack:** Existing Python, unittest, LangGraph, standard-library clocks/logging; no new runtime dependency.
+**Spec:** `docs/INFRASTRUCTURE_REVIEW.md` (findings, phase boundaries, acceptance criteria, manual release checks).
+**Approval:** User approved Phase 1 and explicitly expanded it to job-reliability audit, structured export schema, and tests. Existing Trust/Provenance live validation remains open.
+
+**Approved scope amendment:** Add `backend/app/services/intelligence_export.py`, `backend/tests/test_intelligence_export.py`, and `docs/intelligence-export-v1.schema.json`. Implement a pure read-only library builder over caller-supplied search/result/patent rows, typed versioned output, JSON Schema, deterministic serialization, explicit unknowns for legacy provenance/dates, and evidence-only metrics. No new endpoint, live integration, queue, DB migration, provider call, or trading logic. Document the callable and connector design in the infrastructure review.
+
+**Ruling:** Continue in the approved current local working tree, preserving dirty files; a clean checkout would omit the source-of-truth uncommitted fixes. Execute independent export work with a subagent as directed by the execution skill; review its result before completion. Approval of this amended Phase 1 is supplied by the user's request itself.
+
+- [x] Inspect local git status/branch/history, documentation/tasks, application data flow, tests, and CI configuration.
+- [x] Run baseline backend test and frontend lint/build; record warnings and mock latency/correctness/failure probes in the review.
+- [x] Produce `docs/INFRASTRUCTURE_REVIEW.md` before implementation.
+- [x] Obtain approval for this concrete Phase 1 scope as required by the session-supplied AGENTS.md planning rule.
+- [x] Extend reliability audit with crash windows, duplicate delivery, retry/failure behavior, status transitions, observability, and a future durable-worker design (no migration).
+- [x] Implement and test versioned read-only intelligence export; generate JSON Schema; document Researcher consumption and timestamp/provenance limitations.
+- [x] Add `backend/tests/test_pipeline_telemetry.py` with deterministic success/error/cancellation, timing, return identity, and secret-omission cases; run to demonstrate missing instrumentation.
+- [x] Add `backend/app/agents/telemetry.py` and update only node registration in `backend/app/agents/graph.py`; retain exact graph order, state, exceptions, and provider/DB behavior.
+- [x] Add `backend/tests/test_pipeline_baseline.py` covering six mock stages, output fixture, fallback and SerpAPI disable, and current empty-on-outage behavior; prohibit external calls.
+- [x] Run all backend tests and at least 20 paired mock timing samples; rerun frontend lint/build; record exact results and overhead in the review.
+- [x] Inspect final diff against the initial dirty tree; report Phase 1 changes, unresolved findings, and unrun live checks. Do not commit, push, migrate, deploy, or implement later phases.
+
+**Validation:** 32 backend tests passed; frontend lint/build passed with existing warnings. Mock paired medians 1.052 ms without wrapper / 1.158 ms with wrapper; all paired outputs equal. Actual mock pipeline persistence exported as 10 patents/3 clusters with unknown historical times preserved. Independent final review found no introduced defects. Live Supabase/browser validation and process-death recovery remain unverified; Phase 1 does not implement durable jobs.
+
+**Implementation file boundary:** Only the four originally planned Python paths, the three export paths in the amendment, `docs/INFRASTRUCTURE_REVIEW.md`, and `tasks/todo.md`. Adjacent issues in the review require separate scope/approval; do not fix them within Phase 1.
+
+## Current Sprint: Trust/Provenance Validation (2026-09-02)
+
+- [x] Run frontend build and lint
+- [x] Run backend import and compile validation
+- [x] Replace the unavailable Groq model with a configurable, live-compatible model
+- [x] Add and run a regression test for configured Groq model selection
+- [x] Exercise the real external pipeline without persistence
+- [ ] Exercise one HTTP patent-landscape job end to end — blocked: configured Supabase host does not resolve
+- [x] Verify AI provenance labels and Lens.org → SerpAPI behavior
+- [x] Remove generated TypeScript build metadata from the change set
+- [x] Reconcile the stale scaffold checklist with the implemented product
+
+### Operational Follow-ups
+
+- [ ] Restore or replace the configured Supabase project, then rerun the HTTP end-to-end test
+- [ ] Replace the Lens.org token; the current token returns HTTP 401 and forces every query to SerpAPI
+
+## Current Research Spike: Product Direction (2026-09-01)
+
+- [x] Map the current product, architecture, and existing capabilities
+- [x] Audit the retrieval, analysis, trust, and operational risks in code
+- [x] Research current official patent-search tools, data access, and competitor positioning
+- [x] Recommend the product wedge, next milestone, and sequenced roadmap
+- [x] Report findings with evidence, risks, and exact validation tests
+
+## Historical Sprint: Initial Product Build
 
 ### In Progress
 
 - [x] Read CLAUDE.md and spec file
 - [x] Plan monorepo structure
-- [ ] Scaffold all folders and placeholder files
-- [ ] Implement FastAPI /jobs routes
-- [ ] Implement LangGraph graph with mock nodes
-- [ ] Wire Supabase client into routes and nodes
+- [x] Scaffold the backend and frontend applications
+- [x] Implement FastAPI `/jobs` routes
+- [x] Implement the LangGraph pipeline
+- [x] Wire the Supabase client into routes and nodes
 
 ### Up Next
 
-- [ ] Frontend: input page + polling stepper UI
-- [ ] Replace mock nodes with real implementations one by one
-- [ ] Results page UI
+- [x] Frontend: input page + polling stepper UI
+- [x] Replace mock nodes with real implementations
+- [x] Results page UI
 - [ ] End-to-end test with real patent idea
 
 ### Done

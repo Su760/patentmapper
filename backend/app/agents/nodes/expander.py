@@ -2,7 +2,7 @@
 Query Expander Node
 In:  invention_idea
 Out: search_queries (5-10 queries)
-Real impl: Groq llama-3.3-70b-versatile (JSON-mode function calling to force a list)
+Real impl: configured Groq model with JSON mode to force a list
 """
 import json
 import logging
@@ -14,7 +14,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from supabase import AsyncClient
 
 from app.agents.state import LandscapeState
+from app.services.execution import update_stage, option
 from app.core.config import settings
+from app.services.llm import create_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +50,11 @@ async def expander_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     search_id = state["search_id"]
     logger.info("[expander] starting for search_id=%s", search_id)
 
-    await supabase.table("searches").update({"current_step": "generating_queries"}).eq(
-        "id", search_id
-    ).execute()
+    await update_stage(supabase, state, "generating_queries")
 
     suffix = _JURISDICTION_SUFFIX.get(state.get("jurisdiction", "all"), "")
 
-    if settings.mock_mode:
+    if option("mock_mode"):
         queries = [q for i, q in enumerate(MOCK_QUERIES) if i < 7]
         if suffix:
             queries = [f"{q} {suffix}" for q in queries]
@@ -64,8 +64,8 @@ async def expander_node(state: LandscapeState, supabase: AsyncClient) -> Dict[st
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
     async def _call_groq() -> List[Any]:
         client = AsyncGroq(api_key=settings.groq_api_key)
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+        response = await create_chat_completion(
+            client,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": state["invention_idea"]},

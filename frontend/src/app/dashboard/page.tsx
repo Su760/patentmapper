@@ -3,15 +3,24 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { DEMO_JOB_ID, DEMO_META } from "@/lib/demo";
 import { getJobStatus } from "@/lib/api";
+import { startJobPolling } from "@/lib/poll-job";
 import { createClient } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth-context";
 
-const JOBS_KEY = "patentmapper_job_ids";
+import { useUsage } from "@/lib/use-usage";
+import UsageSummary from "@/components/UsageSummary";
 
 interface DashboardItem {
   id: string;
-  status: "processing" | "completed" | "failed" | null;
+  status:
+    | "queued" | "running" | "finalizing" | "interrupted"
+    | "processing"
+    | "completed"
+    | "insufficient_evidence"
+    | "failed"
+    | null;
   current_step: string | null;
   error_message: string | null;
   inventionIdea: string | null;
@@ -39,6 +48,12 @@ function formatDate(iso: string | null | undefined): string {
 }
 
 function StatusBadge({ status }: { status: DashboardItem["status"] }) {
+  if (status === "queued") return <span className="pm-badge blue">Queued</span>;
+  if (status === "finalizing") return <span className="pm-badge blue">Saving output</span>;
+  if (status === "interrupted") return <span className="pm-badge red">Interrupted</span>;
+  if (!status) return <span className="pm-pill">Status unavailable</span>;
+  if (status === "insufficient_evidence")
+    return <span className="pm-pill">Insufficient evidence</span>;
   if (status === "completed") {
     return (
       <span className="pm-badge green">
@@ -89,19 +104,30 @@ function StatusBadge({ status }: { status: DashboardItem["status"] }) {
 }
 
 function DashboardContent() {
+  const { user, loading } = useAuth();
+  const params = useSearchParams();
+  return <DashboardOwner key={`${loading}:${user?.id ?? "signed-out"}:${params.get("upgraded")}`} />;
+}
+
+function DashboardOwner() {
   const searchParams = useSearchParams();
+  const usage = useUsage();
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const { user, loading: authLoading } = useAuth();
-  const [items, setItems] = useState<DashboardItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showBanner, setShowBanner] = useState(false);
+  const [storedItems, setItems] = useState<DashboardItem[]>(() => user ? [] : [{
+    id: DEMO_JOB_ID, status: "completed", current_step: "done", error_message: null,
+    inventionIdea: DEMO_META.invention_idea, created_at: DEMO_META.created_at,
+  }]);
+  const [itemsOwner] = useState(user?.id ?? null);
+  const [loading, setLoading] = useState(authLoading || !!user);
+  const [showBanner, setShowBanner] = useState(searchParams.get("upgraded") === "true");
   const [filter, setFilter] = useState<
-    "all" | "completed" | "processing" | "failed"
+    "all" | "completed" | "queued" | "running" | "finalizing" | "interrupted" | "failed"
   >("all");
   const [q, setQ] = useState("");
 
   useEffect(() => {
     if (searchParams.get("upgraded") === "true") {
-      setShowBanner(true);
       const t = setTimeout(() => setShowBanner(false), 5000);
       return () => clearTimeout(t);
     }
@@ -110,6 +136,8 @@ function DashboardContent() {
   useEffect(() => {
     if (authLoading) return;
 
+    let cancelled = false;
+    const stopPollers: (() => void)[] = [];
     const client = createClient();
 
     if (user) {
@@ -121,7 +149,16 @@ function DashboardContent() {
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(20)
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (cancelled) return;
+          if (error) {
+            setHistoryError(
+              "Could not load your analyses. Reload to retry or sign in again.",
+            );
+            setLoading(false);
+            return;
+          }
+          setHistoryError(null);
           setItems(
             (data ?? []).map((row) => ({
               id: row.id as string,
@@ -133,58 +170,32 @@ function DashboardContent() {
             })),
           );
           setLoading(false);
+          for (const row of data ?? []) {
+            if (!["queued", "running", "finalizing", "processing"].includes(row.status)) continue;
+            stopPollers.push(startJobPolling({
+              read: (signal) => getJobStatus(row.id, signal),
+              onStatus: (status) => {
+                if (cancelled) return;
+                setItems((items) => items.map((item) => item.id === row.id ? {
+                  ...item, status: status.status,
+                  current_step: status.current_step, error_message: status.error_message,
+                } : item));
+              },
+              onError: (message, stopped) => {
+                if (!cancelled) setHistoryError(`${message} ${stopped
+                  ? "Status monitoring paused; reload to check again." : "Retrying status."}`);
+              },
+            }));
+          }
         });
-    } else {
-      let ids: string[] = [];
-      try {
-        ids = JSON.parse(localStorage.getItem(JOBS_KEY) ?? "[]") as string[];
-      } catch {
-        ids = [];
-      }
-
-      if (ids.length === 0) {
-        setLoading(false);
-        return;
-      }
-
-      Promise.all([
-        Promise.all(ids.map((id) => getJobStatus(id).catch(() => null))),
-        Promise.all(
-          ids.map(async (id) => {
-            try {
-              const { data } = await client
-                .from("searches")
-                .select("invention_idea")
-                .eq("id", id)
-                .single();
-              return (
-                (data as { invention_idea: string } | null)?.invention_idea ??
-                null
-              );
-            } catch {
-              return null;
-            }
-          }),
-        ),
-      ]).then(([statuses, ideas]) => {
-        setItems(
-          ids.map((id, idx) => {
-            const s = statuses[idx];
-            return {
-              id,
-              status: s?.status ?? null,
-              current_step: s?.current_step ?? null,
-              error_message: s?.error_message ?? null,
-              inventionIdea: ideas[idx],
-              created_at: null,
-            };
-          }),
-        );
-        setLoading(false);
-      });
     }
+    return () => {
+      cancelled = true;
+      stopPollers.forEach((stop) => stop());
+    };
   }, [user, authLoading]);
 
+  const items = itemsOwner === (user?.id ?? null) ? storedItems : [];
   const filtered = items.filter(
     (item) =>
       (filter === "all" || item.status === filter) &&
@@ -193,12 +204,15 @@ function DashboardContent() {
   );
 
   const filterTabs: {
-    v: "all" | "completed" | "processing" | "failed";
+    v: "all" | "completed" | "queued" | "running" | "finalizing" | "interrupted" | "failed";
     n: string;
   }[] = [
     { v: "all", n: "All" },
     { v: "completed", n: "Completed" },
-    { v: "processing", n: "Running" },
+    { v: "queued", n: "Queued" },
+    { v: "running", n: "Running" },
+    { v: "finalizing", n: "Saving" },
+    { v: "interrupted", n: "Interrupted" },
     { v: "failed", n: "Failed" },
   ];
 
@@ -223,7 +237,8 @@ function DashboardContent() {
               fontWeight: 500,
             }}
           >
-            Welcome to Pro! Unlimited analyses activated.
+            Checkout completed. Your plan and bounded allowance appear below
+            once confirmed.
           </div>
         </div>
       )}
@@ -234,7 +249,7 @@ function DashboardContent() {
           <div className="pm-dash-sub">
             {user
               ? "All past patent analyses from your account."
-              : "All past patent analyses from this browser."}
+              : "A fixed synthetic demo. Sign in for private analyses."}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -253,7 +268,7 @@ function DashboardContent() {
             ) : (
               <>
                 {items.length}
-                <span className="delta">this session</span>
+                <span className="delta">shown</span>
               </>
             )}
           </div>
@@ -269,21 +284,22 @@ function DashboardContent() {
         <div className="pm-dash-stat">
           <div className="label">Plan</div>
           <div className="value" style={{ fontSize: 18 }}>
-            {user ? "Pro" : "Free"}
-            {user && (
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                }}
-              >
-                {" "}
-                · $49/mo
-              </span>
-            )}
+            {user
+              ? usage.data?.plan === "pro"
+                ? "Pro"
+                : usage.data?.plan === "free"
+                  ? "Free"
+                  : "Unavailable"
+              : "Demo"}
           </div>
         </div>
+      </div>
+
+      <div style={{ padding: "16px 32px" }}>
+        <UsageSummary {...usage} />
+        {itemsOwner === (user?.id ?? null) && historyError && (
+          <p role="alert">{historyError}</p>
+        )}
       </div>
 
       <div className="pm-dash-toolbar">
@@ -379,7 +395,7 @@ function DashboardContent() {
           </div>
         )}
 
-        {!loading && !authLoading && items.length === 0 && (
+        {!loading && !authLoading && !historyError && items.length === 0 && (
           <div
             style={{
               textAlign: "center",
@@ -464,12 +480,12 @@ function DashboardContent() {
                             className="mono"
                             style={{ fontSize: 10.5 }}
                           >{`id: ${item.id.slice(0, 8)}`}</span>
-                          {stepLabel && item.status === "processing" && (
+                          {stepLabel && ["processing", "running", "queued", "finalizing"].includes(item.status ?? "") && (
                             <span style={{ color: "var(--blue)" }}>
                               · {stepLabel}
                             </span>
                           )}
-                          {item.error_message && item.status === "failed" && (
+                          {item.error_message && ["failed", "interrupted"].includes(item.status ?? "") && (
                             <span style={{ color: "var(--red)" }}>
                               · {item.error_message}
                             </span>

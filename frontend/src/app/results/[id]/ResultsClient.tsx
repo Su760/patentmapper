@@ -1,20 +1,38 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import Link from "next/link";
+
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   getJobStatus,
+  getClaimsAnalysis,
   ideateWhiteSpace,
   WhiteSpaceIdea,
   analyzeClaimsRequest,
   ClaimResult,
+  getEvidence,
+  EvidenceResponse,
+  EvidencePatent,
 } from "@/lib/api";
+import { GRAPH_VIEW, RESULTS_POLLING } from "@/lib/results-config";
+import { startJobPolling } from "@/lib/poll-job";
 import { createClient } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
+import { DEMO_JOB_ID, DEMO_META, DEMO_RESULTS } from "@/lib/demo";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import "./print.css";
+import EvidenceWorkbench, { patentSource } from "@/components/EvidenceWorkbench";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Phase = "init" | "polling" | "loading_results" | "completed" | "failed";
+type Phase =
+  | "init"
+  | "polling"
+  | "loading_results"
+  | "completed"
+  | "interrupted"
+  | "failed"
+  | "unavailable";
 
 interface Cluster {
   theme_name: string;
@@ -34,6 +52,9 @@ interface CitationLink {
 interface SearchResult {
   clusters: Cluster[];
   white_space_analysis: string;
+  final_report?: string | null;
+  retrieval_outcome?: string | null;
+  coverage_warnings?: string[];
   citation_links?: CitationLink[];
 }
 
@@ -64,12 +85,9 @@ const STEPS = [
   { key: "clustering", label: "Clustering by theme..." },
   { key: "analyzing_gaps", label: "Analyzing white space..." },
   { key: "writing_report", label: "Writing your brief..." },
+  { key: "finalizing", label: "Saving results..." },
   { key: "done", label: "Complete!" },
 ] as const;
-
-const STEPPER_MIN_MS = 1500;
-const SIMULATE_INTERVAL_MS = 2000;
-const POLL_INTERVAL_MS = 3000;
 
 const CLUSTER_COLORS = [
   "#3b82f6",
@@ -195,6 +213,7 @@ function Stepper({ stepIdx }: { stepIdx: number }) {
         return (
           <div
             key={step.key}
+            aria-current={isActive ? "step" : undefined}
             style={{
               display: "flex",
               alignItems: "flex-start",
@@ -295,12 +314,14 @@ function WhiteSpaceCard({
   index,
   idea,
   isIdeating,
+  ideationError,
   onIdeate,
 }: {
   gap: WhiteSpaceGap;
   index: number;
   idea?: WhiteSpaceIdea;
   isIdeating: boolean;
+  ideationError?: string;
   onIdeate: () => void;
 }) {
   const tier = viabilityToTier(gap.viability);
@@ -320,6 +341,9 @@ function WhiteSpaceCard({
         <span className={`pm-badge ${badgeClass}`}>{gap.viability}</span>
       </div>
       <p className="pm-ws-desc">{gap.description}</p>
+      {ideationError && (
+        <p role="alert">Idea generation failed: {ideationError}</p>
+      )}
       <div className="pm-ws-foot">
         <div className="pm-ws-score">
           <span style={{ color: "var(--text-3)" }}>viability</span>
@@ -476,7 +500,7 @@ function TrendCard({ cluster, color }: { cluster: Cluster; color: string }) {
   );
 }
 
-function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
+function ClusterCard({ cluster, color, patents }: { cluster: Cluster; color: string; patents: EvidencePatent[] }) {
   const maxCount = Math.max(
     ...(cluster.top_assignees ?? []).map((a) => a.count),
     1,
@@ -489,7 +513,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
       <div className="pm-cluster-head">
         <span className="pm-cluster-dot"></span>
         <span className="pm-cluster-name">{cluster.theme_name}</span>
-        <span className="pm-cluster-meta">{cluster.patent_ids.length} pat</span>
+        <span className="pm-cluster-meta">{cluster.patent_ids.length} records</span>
       </div>
       <p className="pm-cluster-desc">{cluster.description}</p>
       {cluster.ipc_codes && cluster.ipc_codes.length > 0 && (
@@ -512,7 +536,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
               <div key={a.name}>
                 <div className="pm-player">
                   <span className="pm-player-name">{a.name}</span>
-                  <span className="pm-player-count">{a.count} patents</span>
+                  <span className="pm-player-count">{a.count} records</span>
                 </div>
                 <div className="pm-player-bar">
                   <i style={{ width: `${(a.count / maxCount) * 100}%` }}></i>
@@ -526,7 +550,7 @@ function ClusterCard({ cluster, color }: { cluster: Cluster; color: string }) {
         {cluster.patent_ids.slice(0, 4).map((pid) => (
           <a
             key={pid}
-            href={`https://patents.google.com/patent/${pid}`}
+            href={patentSource(patents.find(p => p.patent_id === pid)) ?? "#saved-evidence"}
             target="_blank"
             rel="noopener noreferrer"
             className="pm-chip tiny"
@@ -549,12 +573,15 @@ function CitationGraphSVG({
   nodes,
   links,
   onNodeClick,
+  zoom,
+  height,
 }: {
   nodes: GraphNode[];
   links: SimLink[];
   onNodeClick: (node: GraphNode) => void;
+  zoom: number;
+  height: number;
 }) {
-  const HEIGHT = 400;
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(800);
   const [positions, setPositions] = useState<
@@ -578,7 +605,7 @@ function CitationGraphSVG({
     iterRef.current = 0;
 
     const W = width;
-    const H = HEIGHT;
+    const H = height;
     const MAX_ITER = 250;
     const n = nodes.length;
 
@@ -664,14 +691,22 @@ function CitationGraphSVG({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [nodes, links, width]);
+  }, [nodes, links, width, height]);
 
   return (
     <div
       ref={containerRef}
-      className="w-full h-[400px] rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
+      className="w-full rounded-xl overflow-hidden border border-gray-700 bg-gray-950"
+      style={{ height }}
     >
-      <svg width={width} height={HEIGHT} style={{ display: "block" }}>
+      <svg
+        id="patent-relationship-graph"
+        aria-label="Patent relationship graph"
+        width={width}
+        height={height}
+        viewBox={`${(width - width / zoom) / 2} ${(height - height / zoom) / 2} ${width / zoom} ${height / zoom}`}
+        style={{ display: "block" }}
+      >
         {links.map((link, i) => {
           const src = positions.get(link.source);
           const tgt = positions.get(link.target);
@@ -697,6 +732,15 @@ function CitationGraphSVG({
               key={node.id}
               transform={`translate(${pos.x},${pos.y})`}
               onClick={() => onNodeClick(node)}
+              role="button"
+              tabIndex={0}
+              aria-label={`View details for ${node.id}`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onNodeClick(node);
+                }
+              }}
               style={{ cursor: "pointer" }}
             >
               <circle r={5} fill={color} />
@@ -718,23 +762,51 @@ function PatentGraphSection({
   citationLinks: CitationLink[];
   onNodeClick: (node: GraphNode) => void;
 }) {
-  const graphData = buildGraphData(clusters, citationLinks);
+  const graphData = useMemo(() => buildGraphData(clusters, citationLinks), [clusters, citationLinks]);
+  const [zoom, setZoom] = useState(GRAPH_VIEW.initialZoom);
+  const [expanded, setExpanded] = useState(false);
   return (
-    <CitationGraphSVG
-      nodes={graphData.nodes}
-      links={graphData.links}
-      onNodeClick={onNodeClick}
-    />
+    <div className="pm-graph-panel print:hidden">
+      <div className="pm-graph-grid"></div>
+      <div className="pm-graph-head">
+        <div className="pm-graph-legend">
+          {clusters.map((cluster, i) => (
+            <div key={cluster.theme_name} className="pm-graph-legend-row">
+              <span className="ldot" style={{ background: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }} />
+              {cluster.theme_name}
+            </div>
+          ))}
+        </div>
+        <div className="pm-graph-controls" role="group" aria-label="Graph controls">
+          <button type="button" className="pm-graph-ctl" aria-label="Zoom in" title="Zoom in"
+            disabled={zoom >= GRAPH_VIEW.maxZoom}
+            onClick={() => setZoom(value => Math.min(GRAPH_VIEW.maxZoom, value + GRAPH_VIEW.zoomStep))}>+</button>
+          <button type="button" className="pm-graph-ctl" aria-label="Zoom out" title="Zoom out"
+            disabled={zoom <= GRAPH_VIEW.minZoom}
+            onClick={() => setZoom(value => Math.max(GRAPH_VIEW.minZoom, value - GRAPH_VIEW.zoomStep))}>−</button>
+          <button type="button" className="pm-graph-ctl"
+            aria-label={expanded ? "Collapse graph" : "Expand graph"}
+            title={expanded ? "Collapse graph" : "Expand graph"}
+            aria-expanded={expanded} aria-controls="patent-relationship-graph"
+            onClick={() => setExpanded(value => !value)}>{expanded ? "⤡" : "⤢"}</button>
+          <span className="sr-only" role="status">Graph zoom: {Math.round(zoom * 100)}%</span>
+        </div>
+      </div>
+      <CitationGraphSVG nodes={graphData.nodes} links={graphData.links} onNodeClick={onNodeClick}
+        zoom={zoom} height={expanded ? GRAPH_VIEW.expandedHeight : GRAPH_VIEW.height} />
+    </div>
   );
 }
 
 function NodeSidePanel({
   node,
   clusters,
+  patents,
   onClose,
 }: {
   node: GraphNode;
   clusters: Cluster[];
+  patents: EvidencePatent[];
   onClose: () => void;
 }) {
   // Click-outside to close
@@ -755,6 +827,7 @@ function NodeSidePanel({
   return (
     <div
       ref={panelRef}
+      className="pm-node-panel"
       style={{
         position: "fixed",
         right: 16,
@@ -824,7 +897,7 @@ function NodeSidePanel({
         </div>
       )}
       <a
-        href={`https://patents.google.com/patent/${node.id}`}
+        href={patentSource(patents.find(p => p.patent_id === node.id)) ?? "#saved-evidence"}
         target="_blank"
         rel="noopener noreferrer"
         style={{
@@ -835,7 +908,7 @@ function NodeSidePanel({
           textDecoration: "none",
         }}
       >
-        View on Google Patents →
+        Inspect saved source →
       </a>
     </div>
   );
@@ -915,7 +988,7 @@ function ClaimCard({ claim }: { claim: ClaimResult }) {
         {claim.title}
       </p>
       <p className="pm-cluster-section-label" style={{ marginBottom: 6 }}>
-        Likely Claims
+        AI-inferred technical aspects
       </p>
       <ul
         style={{
@@ -949,87 +1022,159 @@ function ClaimCard({ claim }: { claim: ClaimResult }) {
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export default function ResultsClient({ jobId }: { jobId: string }) {
+  const { user, loading: authLoading } = useAuth();
+  const userId = user?.id;
+  const isDemo = jobId === DEMO_JOB_ID;
+  const accessScope = useRef("");
+  accessScope.current = `${jobId}:${userId ?? "signed-out"}`;
+  const [renderScope, setRenderScope] = useState("");
   const [phase, setPhase] = useState<Phase>("init");
+  const [jobStatus, setJobStatus] = useState("");
   const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [simulatedStepIdx, setSimulatedStepIdx] = useState(0);
+  const [pollNotice, setPollNotice] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [inventionIdea, setInventionIdea] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [searchMeta, setSearchMeta] = useState<SearchMeta | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
   const [copied, setCopied] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [ideatingId, setIdeatingId] = useState<string | null>(null);
+  const [ideating, setIdeating] = useState<Record<string, boolean>>({});
+  const pendingIdeations = useRef(new Set<string>());
+  const [ideationErrors, setIdeationErrors] = useState<Record<string, string>>(
+    {},
+  );
   const [ideas, setIdeas] = useState<Record<string, WhiteSpaceIdea>>({});
   const [analyzingClaims, setAnalyzingClaims] = useState(false);
-  const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(null);
+  const [claimsAnalysis, setClaimsAnalysis] = useState<ClaimResult[] | null>(
+    null,
+  );
+  const [evidence, setEvidence] = useState<EvidenceResponse | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [claimsWarnings, setClaimsWarnings] = useState<string[]>([]);
   const [claimsError, setClaimsError] = useState<string | null>(null);
 
-  const stepperStartedAt = useRef<number>(0);
+  const [claimsCacheReady, setClaimsCacheReady] = useState(false);
+  const lifecycle = useRef<AbortController | null>(null);
+  const epoch = useRef(0);
+  const claimsPending = useRef(false);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const claimsSectionRef = useRef<HTMLElement | null>(null);
 
-  // Fetch invention_idea early so loading_results screen has context
-  const fetchInventionIdea = useCallback(async () => {
-    const client = createClient();
-    const { data } = await client
-      .from("searches")
-      .select("invention_idea")
-      .eq("id", jobId)
-      .single();
-    if (data?.invention_idea) setInventionIdea(data.invention_idea);
-  }, [jobId]);
-
-  const loadResults = useCallback(async () => {
-    const client = createClient();
-    const [searchRes, resultsRes] = await Promise.all([
-      client
-        .from("searches")
-        .select("invention_idea, created_at")
-        .eq("id", jobId)
-        .single(),
-      client
-        .from("search_results")
-        .select("clusters, white_space_analysis, citation_links")
-        .eq("search_id", jobId)
-        .single(),
-    ]);
-
-    if (searchRes.error || resultsRes.error) {
-      setErrorMessage("Could not load results from database.");
-      setPhase("failed");
-      return;
+  const loadEvidence = useCallback(async (signal: AbortSignal, version: number) => {
+    const scope = accessScope.current;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (signal.aborted) return;
+    signal.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, RESULTS_POLLING.timeoutMs);
+    const current = () => !signal.aborted && epoch.current === version && scope === accessScope.current;
+    setEvidenceError(null);
+    try {
+      const saved = await getEvidence(jobId, controller.signal);
+      if (current()) setEvidence(saved);
+    } catch (error) {
+      if (current()) setEvidenceError(controller.signal.aborted ? "Saved evidence timed out. Retry reads saved data only."
+        : error instanceof Error ? error.message : "Saved evidence unavailable.");
+    } finally {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", abort);
     }
-
-    setSearchMeta(searchRes.data as SearchMeta);
-    setSearchResult(resultsRes.data as SearchResult);
-    setPhase("completed");
   }, [jobId]);
+
+  const loadCachedClaims = useCallback(
+    async (signal: AbortSignal, version: number) => {
+      if (signal.aborted) return;
+      const scope = accessScope.current;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal.addEventListener("abort", abort, { once: true });
+      const timeout = setTimeout(abort, RESULTS_POLLING.timeoutMs);
+      const current = () =>
+        !signal.aborted &&
+        epoch.current === version &&
+        scope === accessScope.current;
+      setClaimsCacheReady(false);
+      setClaimsError(null);
+      try {
+        const { claims, warnings } = await getClaimsAnalysis(jobId, controller.signal);
+        if (!current() || signal.aborted) return;
+        setClaimsAnalysis(claims);
+      setClaimsWarnings(warnings ?? []);
+        setClaimsCacheReady(true);
+      } catch (error) {
+        if (!current() || signal.aborted) return;
+        setClaimsError(
+          controller.signal.aborted
+            ? "Saved claims timed out. Retry saved claims; no generation was requested."
+            : error instanceof Error
+              ? error.message
+              : "Could not load saved claims.",
+        );
+      } finally {
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", abort);
+      }
+    },
+    [jobId],
+  );
 
   async function handleIdeate(gap: WhiteSpaceGap) {
-    setIdeatingId(gap.title);
+    const scope = accessScope.current;
+    const version = epoch.current;
+    const key = `${version}:${scope}:${gap.title}`;
+    if (pendingIdeations.current.has(key)) return;
+    pendingIdeations.current.add(key);
+    setIdeating((prev) => ({ ...prev, [gap.title]: true }));
+    setIdeationErrors((prev) => ({ ...prev, [gap.title]: "" }));
     try {
-      const idea = await ideateWhiteSpace(jobId, gap.title, gap.description);
+      const idea = await ideateWhiteSpace(
+        jobId,
+        gap.title,
+        gap.description,
+        lifecycle.current?.signal,
+      );
+      if (scope !== accessScope.current || version !== epoch.current) return;
       setIdeas((prev) => ({ ...prev, [gap.title]: idea }));
     } catch (e) {
-      console.error("Ideate failed", e);
+      if (scope === accessScope.current && version === epoch.current)
+        setIdeationErrors((prev) => ({
+          ...prev,
+          [gap.title]:
+            e instanceof Error
+              ? e.message
+              : "Try again. If this continues, reload or sign in again.",
+        }));
     } finally {
-      setIdeatingId(null);
+      pendingIdeations.current.delete(key);
+      if (scope === accessScope.current && version === epoch.current)
+        setIdeating((prev) => ({ ...prev, [gap.title]: false }));
     }
   }
 
   async function handleAnalyzeClaims() {
+    const scope = accessScope.current;
+    if (claimsPending.current || !claimsCacheReady) return;
+    claimsPending.current = true;
+    const version = epoch.current;
     setAnalyzingClaims(true);
     setClaimsError(null);
     try {
-      const { claims } = await analyzeClaimsRequest(jobId);
-      setClaimsAnalysis(claims);
-      setTimeout(
-        () => claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" }),
-        100,
+      const { claims, warnings } = await analyzeClaimsRequest(
+        jobId,
+        lifecycle.current?.signal,
       );
+      if (scope !== accessScope.current || version !== epoch.current) return;
+      setClaimsAnalysis(claims);
+      setClaimsWarnings(warnings ?? []);
     } catch (e) {
-      setClaimsError(e instanceof Error ? e.message : "Analysis failed");
+      if (scope === accessScope.current && version === epoch.current)
+        setClaimsError(e instanceof Error ? e.message : "Analysis failed");
     } finally {
-      setAnalyzingClaims(false);
+      if (scope === accessScope.current && version === epoch.current) {
+        claimsPending.current = false;
+        setAnalyzingClaims(false);
+      }
     }
   }
 
@@ -1042,78 +1187,139 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }
 
   async function handleCopyLink() {
+    const version = epoch.current;
+    const scope = accessScope.current;
     await navigator.clipboard.writeText(window.location.href);
+    if (version !== epoch.current || scope !== accessScope.current) return;
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopied(false), 2000);
   }
 
-  // ── Effect 1: Initial status check on mount ──
   useEffect(() => {
-    getJobStatus(jobId)
-      .then((status) => {
-        if (status.status === "completed") {
-          // Already done — skip stepper, go straight to loading_results
+    if (authLoading && !isDemo) return;
+    const version = ++epoch.current;
+    const scope = accessScope.current;
+    const controller = new AbortController();
+    lifecycle.current = controller;
+    const current = () =>
+      !controller.signal.aborted &&
+      version === epoch.current &&
+      scope === accessScope.current;
+    setRenderScope(scope);
+    setSearchMeta(null);
+    setSearchResult(null);
+    setEvidence(null);
+    setEvidenceError(null);
+    setClaimsWarnings([]);
+    setClaimsAnalysis(null);
+    setClaimsCacheReady(false);
+    setIdeas({});
+    setInventionIdea(null);
+    setSelectedNode(null);
+    setIdeating({});
+    setIdeationErrors({});
+    setAnalyzingClaims(false);
+    claimsPending.current = false;
+    setClaimsError(null);
+    setPollNotice(null);
+    setErrorMessage(null);
+    setCurrentStep(null);
+    setPhase("init");
+    let stop = () => {};
+    if (!isDemo && !userId) {
+      setErrorMessage(
+        "Sign in to access this private analysis. A job link alone does not grant access.",
+      );
+      setPhase("unavailable");
+    } else {
+      stop = startJobPolling({
+        read: (signal) => getJobStatus(jobId, signal),
+        onStatus: async (status, signal) => {
+          if (!current() || signal.aborted) return;
+          setPollNotice(null);
+          setJobStatus(status.status);
+          setCurrentStep(status.current_step);
+          if (["queued", "running", "finalizing", "processing"].includes(status.status)) {
+            setPhase("polling");
+            return;
+          }
+          if (status.status === "failed" || status.status === "interrupted") {
+            setErrorMessage(status.error_message ?? "Analysis failed.");
+            setPhase(status.status);
+            return;
+          }
           setPhase("loading_results");
-          fetchInventionIdea();
-          loadResults();
-        } else if (status.status === "failed") {
-          setErrorMessage(status.error_message ?? "Analysis failed.");
-          setPhase("failed");
-        } else {
-          // processing — show stepper, record start time
-          setCurrentStep(status.current_step);
-          stepperStartedAt.current = Date.now();
-          setPhase("polling");
-        }
-      })
-      .catch(console.warn);
-  }, [jobId, fetchInventionIdea, loadResults]);
+          if (isDemo) {
+            setSearchMeta(DEMO_META);
+            setSearchResult(DEMO_RESULTS);
+          } else {
+            const client = createClient();
+            const [search, result] = await Promise.all([
+              client
+                .from("searches")
+                .select("invention_idea, created_at")
+                .eq("id", jobId)
+                .abortSignal(signal)
+                .single(),
+              client
+                .from("search_results")
+                .select(
+                  "clusters, white_space_analysis, final_report, citation_links, retrieval_outcome, coverage_warnings",
+                )
+                .eq("search_id", jobId)
+                .abortSignal(signal)
+                .single(),
+            ]);
+            if (!current() || signal.aborted) return;
+            if (search.error || result.error)
+              throw new Error(
+                "Saved results could not be loaded. Retry status to reload them without generating anything.",
+              );
+            setSearchMeta(search.data as SearchMeta);
+            setInventionIdea(search.data.invention_idea);
+            setSearchResult(result.data as SearchResult);
+          }
+          if (!current() || signal.aborted) return;
+          setPhase("completed");
+          // Viewing saved claims never calls the paid generation endpoint.
+          void loadCachedClaims(controller.signal, version);
+          void loadEvidence(controller.signal, version);
+        },
+        onError: (message, stopped, unauthorized) => {
+          if (!current()) return;
+          if (stopped) {
+            setErrorMessage(message);
+            setPhase("unavailable");
+          } else {
+            setPollNotice(
+              `Status unavailable: ${message} Retrying automatically (read only).`,
+            );
+            setPhase("polling");
+          }
+          if (unauthorized) {
+            setSearchResult(null);
+            setClaimsAnalysis(null);
+          }
+        },
+      });
+    }
+    return () => {
+      epoch.current = version + 1;
+      controller.abort();
+      stop();
+      clearTimeout(copyTimer.current);
+    };
+  }, [jobId, userId, authLoading, isDemo, reload, loadCachedClaims, loadEvidence]);
 
-  // ── Effect 2: Simulated step animation while polling ──
-  useEffect(() => {
-    if (phase !== "polling") return;
-
-    const id = setInterval(() => {
-      setSimulatedStepIdx((prev) => Math.min(prev + 1, STEPS.length - 2));
-    }, SIMULATE_INTERVAL_MS);
-
-    return () => clearInterval(id);
-  }, [phase]);
-
-  // ── Effect 3: Real status polling while polling ──
-  useEffect(() => {
-    if (phase !== "polling") return;
-
-    const intervalId = setInterval(async () => {
-      try {
-        const status = await getJobStatus(jobId);
-
-        if (status.status === "completed") {
-          clearInterval(intervalId);
-          // Enforce minimum stepper display time
-          const elapsed = Date.now() - stepperStartedAt.current;
-          const delay = Math.max(0, STEPPER_MIN_MS - elapsed);
-          setTimeout(() => {
-            setPhase("loading_results");
-            fetchInventionIdea();
-            loadResults();
-          }, delay);
-        } else if (status.status === "failed") {
-          clearInterval(intervalId);
-          setErrorMessage(status.error_message ?? "Analysis failed.");
-          setPhase("failed");
-        } else {
-          setCurrentStep(status.current_step);
-        }
-      } catch (err) {
-        console.warn("Poll error:", err);
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(intervalId);
-  }, [phase, jobId, fetchInventionIdea, loadResults]);
+  async function retryCachedClaims() {
+    const controller = lifecycle.current;
+    if (!controller) return;
+    await loadCachedClaims(controller.signal, epoch.current);
+  }
 
   // ── Init UI (brief spinner while first poll resolves) ──
+  if (renderScope !== accessScope.current) return null;
   if (phase === "init") {
     return (
       <main
@@ -1141,10 +1347,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Polling UI ──
   if (phase === "polling") {
     const realStepIdx = STEPS.findIndex((s) => s.key === currentStep);
-    const displayStepIdx = Math.max(
-      simulatedStepIdx,
-      realStepIdx < 0 ? 0 : realStepIdx,
-    );
+    const displayStepIdx = realStepIdx;
 
     return (
       <main
@@ -1157,6 +1360,12 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           padding: "64px 16px",
         }}
       >
+        {pollNotice && (
+          <p role="alert" style={{ padding: 16 }}>
+            {pollNotice}
+          </p>
+        )}
+        {!currentStep && <p>Waiting for a saved backend stage.</p>}
         <div
           style={{
             maxWidth: 672,
@@ -1173,10 +1382,16 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Analyzing your invention...
+            {jobStatus === "queued" ? "Analysis queued"
+              : jobStatus === "finalizing" ? "Saving completed analysis"
+              : "Analyzing your invention..."}
           </h1>
           <p style={{ color: "var(--text-3)", fontSize: 14 }}>
-            This usually takes 15–60 seconds.
+            {jobStatus === "queued"
+              ? "Your inputs are saved. A worker will begin when capacity is available; you can leave this page."
+              : jobStatus === "finalizing"
+                ? "Output is saved. Publication can recover without repeating paid provider calls."
+                : "Progress reflects stages saved by the server."}
           </p>
         </div>
         <Stepper stepIdx={displayStepIdx} />
@@ -1216,7 +1431,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Compiling your results...
+            Loading saved results...
           </h2>
           {inventionIdea && (
             <p
@@ -1235,7 +1450,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   }
 
   // ── Error UI ──
-  if (phase === "failed") {
+  if (phase === "failed" || phase === "interrupted" || phase === "unavailable") {
     return (
       <main
         style={{
@@ -1268,14 +1483,25 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               marginBottom: 8,
             }}
           >
-            Analysis Failed
+            {phase === "interrupted" ? "Analysis interrupted" : phase === "failed" ? "Analysis failed" : "Analysis unavailable"}
           </h2>
           <p style={{ color: "var(--text-2)", fontSize: 14, marginBottom: 24 }}>
             {errorMessage ?? "An unknown error occurred."}
           </p>
-          <a href="/" className="pm-btn sm">
-            ← Try again
-          </a>
+          <button
+            className="pm-btn sm"
+            onClick={() => setReload((value) => value + 1)}
+          >
+            Retry status
+          </button>
+          <p>Checks saved status only; no paid work is started.</p>
+          {phase === "interrupted" && <p>
+            Provider calls may have occurred and the reservation is retained.
+            This execution will not restart automatically.{" "}
+            <Link href="/">Start a fresh analysis</Link> to continue; it consumes
+            a new analysis allowance.
+          </p>}
+          <a href="/auth">Sign in</a> · <Link href="/">New analysis</Link>
         </div>
       </main>
     );
@@ -1284,15 +1510,27 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
   // ── Completed Results ──
   if (!searchResult || !searchMeta) return null;
 
-  const gaps = parseWhiteSpace(searchResult.white_space_analysis ?? "");
-  const clusters: Cluster[] = Array.isArray(searchResult.clusters)
-    ? searchResult.clusters
-    : [];
-  const citationLinks = searchResult.citation_links ?? [];
-  const totalPatents = clusters.flatMap((c) => c.patent_ids).length;
+  const insufficient =
+    searchResult.retrieval_outcome === "insufficient_evidence";
+  const gaps = insufficient
+    ? []
+    : parseWhiteSpace(searchResult.white_space_analysis ?? "");
+  const savedPatents = evidence?.patents ?? [];
+  const savedIds = new Set(savedPatents.map(p => p.patent_id));
+  const clusters: Cluster[] = (evidence?.clusters ?? []).map(c => ({
+    ...c, patent_ids: Array.from(new Set(c.patent_ids.filter(id => savedIds.has(id)))), filing_trend: [],
+  }));
+  const citationLinks = (evidence?.citation_links ?? []).filter(l => savedIds.has(l.source) && savedIds.has(l.target) && l.source !== l.target);
+  const totalPatents = savedPatents.length;
 
   return (
     <div className="pm" style={{ minHeight: "100%" }}>
+      {isDemo && (
+        <p role="status" style={{ padding: 16, color: "var(--text-2)" }}>
+          Synthetic demo — fixed sample data. No patent search or AI generation
+          was performed. <a href="/auth">Sign in</a> for a private analysis.
+        </p>
+      )}
       {/* Sticky header bar */}
       <div className="pm-sticky-bar">
         <div className="pm-sticky-left">
@@ -1320,7 +1558,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           </span>
           <span className="pm-pill">
             <span className="dot" style={{ background: "var(--green)" }}></span>
-            {totalPatents} patents
+            {totalPatents} records
           </span>
           <span
             style={{
@@ -1336,47 +1574,32 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           <button className="pm-btn sm print:hidden" onClick={handleCopyLink}>
             {copied ? "Copied!" : "Share"}
           </button>
-          <button
-            className="pm-btn sm print:hidden"
-            onClick={handleAnalyzeClaims}
-            disabled={analyzingClaims}
-          >
-            {analyzingClaims ? (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg
-                  className="animate-spin"
-                  width={12}
-                  height={12}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                Analyzing...
-              </span>
-            ) : (
-              "⚖ Claims"
-            )}
-          </button>
+          {!insufficient && (
+            <button
+              className="pm-btn sm print:hidden"
+              onClick={() =>
+                claimsSectionRef.current?.scrollIntoView({ behavior: "smooth" })
+              }
+            >
+              ⚖ Claims
+            </button>
+          )}
         </div>
       </div>
-      {claimsError && (
-        <div
-          style={{
-            background: "rgba(239,68,68,0.08)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 8,
-            padding: "8px 16px",
-            margin: "8px 32px 0",
-            color: "var(--red, #ef4444)",
-            fontSize: 13,
-          }}
-        >
-          Claim analysis failed: {claimsError}
-        </div>
+      <EvidenceWorkbench key={renderScope} data={evidence} error={evidenceError}
+        onRetry={() => { if (lifecycle.current) void loadEvidence(lifecycle.current.signal, epoch.current); }} />
+      <p className="px-8 py-3 text-sm">Clusters, relationships, gaps and reports are AI inference from limited available text. They are not retrieved patent claim language or verified citations.</p>
+      {insufficient && (
+        <p role="status" style={{ padding: 32 }}>
+          Insufficient evidence: retrieval succeeded but no usable patents were
+          found. No gap, report, or claims conclusions were generated.
+        </p>
       )}
+      {(searchResult.coverage_warnings ?? []).map((warning, index) => (
+        <p role="status" key={index} style={{ padding: "8px 32px" }}>
+          {warning}
+        </p>
+      ))}
 
       {/* Section 01: White Space Opportunities */}
       {gaps.length > 0 && (
@@ -1397,7 +1620,8 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
                 gap={gap}
                 index={idx}
                 idea={ideas[gap.title]}
-                isIdeating={ideatingId === gap.title}
+                isIdeating={!!ideating[gap.title]}
+                ideationError={ideationErrors[gap.title]}
                 onIdeate={() => handleIdeate(gap)}
               />
             ))}
@@ -1458,6 +1682,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           <div className="pm-cluster-grid">
             {clusters.map((cluster, idx) => (
               <ClusterCard
+                patents={savedPatents}
                 key={cluster.theme_name}
                 cluster={cluster}
                 color={CLUSTER_COLORS[idx % CLUSTER_COLORS.length]}
@@ -1484,40 +1709,18 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               </div>
             </div>
           </section>
-          <div className="pm-graph-panel print:hidden">
-            <div className="pm-graph-grid"></div>
-            <div className="pm-graph-head">
-              <div className="pm-graph-legend">
-                {clusters.map((c, i) => (
-                  <div key={c.theme_name} className="pm-graph-legend-row">
-                    <span
-                      className="ldot"
-                      style={{
-                        background: CLUSTER_COLORS[i % CLUSTER_COLORS.length],
-                      }}
-                    ></span>
-                    {c.theme_name}
-                  </div>
-                ))}
-              </div>
-              <div className="pm-graph-controls">
-                <button className="pm-graph-ctl">+</button>
-                <button className="pm-graph-ctl">−</button>
-                <button className="pm-graph-ctl">⤢</button>
-              </div>
-            </div>
-            <PatentGraphSection
-              clusters={clusters}
-              citationLinks={citationLinks}
-              onNodeClick={setSelectedNode}
-            />
-          </div>
+          <PatentGraphSection
+            clusters={clusters}
+            citationLinks={citationLinks}
+            onNodeClick={setSelectedNode}
+          />
         </>
       )}
 
       {/* Node side panel */}
       {selectedNode && (
         <NodeSidePanel
+          patents={savedPatents}
           node={selectedNode}
           clusters={clusters}
           onClose={() => setSelectedNode(null)}
@@ -1548,7 +1751,15 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
             padding: 32,
           }}
         >
-          <MarkdownRenderer content={searchResult.white_space_analysis ?? ""} />
+          {searchResult.final_report ? (
+            <MarkdownRenderer content={searchResult.final_report} />
+          ) : (
+            <p>
+              {insufficient
+                ? "A full report is unavailable because there is insufficient evidence."
+                : "No saved full report is available for this older analysis."}
+            </p>
+          )}
         </div>
         <div
           className="print:block"
@@ -1564,7 +1775,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
       </section>
 
       {/* Section 06: Claim Analysis */}
-      {claimsAnalysis && (
+      {!insufficient && (
         <section className="pm-section" ref={claimsSectionRef}>
           <div className="pm-section-head">
             <div className="pm-section-title">
@@ -1572,11 +1783,56 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               <h2>Claim analysis</h2>
             </div>
             <div className="pm-section-aside">
-              <span>Prior art overlap with your invention — not legal advice</span>
+              <span>
+                Prior art overlap with your invention — not legal advice
+              </span>
             </div>
           </div>
+          <p>
+            {isDemo
+              ? "Fixed synthetic sample; no usage consumed."
+              : "Uses 1 claims allowance per generation or regeneration. Failed paid attempts also count. Reading saved claims is free."}
+          </p>
+          {claimsWarnings.map((warning, index) => <p role="status" key={index}>{warning}</p>)}
+          <p>AI inference from available abstracts, search snippets or titles. No patent claim language was retrieved. Older saved wording also remains unverified model inference.</p>
+          {claimsError && (
+            <p role="alert">Claim analysis unavailable: {claimsError}</p>
+          )}
+          {!claimsCacheReady ? (
+            <>
+              {!claimsError && <p>Loading saved claims...</p>}
+              {claimsError && (
+                <button className="pm-btn" onClick={retryCachedClaims}>
+                  Retry saved claims
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              {claimsAnalysis === null && (
+                <p>
+                  No saved claims analysis. Generate it explicitly when you are
+                  ready.
+                </p>
+              )}
+              {claimsAnalysis?.length === 0 && (
+                <p>The saved claims analysis contains no claims.</p>
+              )}
+              <button
+                className="pm-btn"
+                disabled={analyzingClaims}
+                onClick={handleAnalyzeClaims}
+              >
+                {analyzingClaims
+                  ? "Generating claims..."
+                  : claimsAnalysis === null
+                    ? "Generate claims"
+                    : "Regenerate claims"}
+              </button>
+            </>
+          )}
           <div className="pm-cluster-grid">
-            {claimsAnalysis.map((claim) => (
+            {(claimsAnalysis ?? []).map((claim) => (
               <ClaimCard key={claim.patent_id} claim={claim} />
             ))}
           </div>
@@ -1589,7 +1845,7 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
               fontFamily: "var(--font-mono)",
             }}
           >
-            This analysis is AI-generated from patent abstracts only and does
+            This analysis is AI inference from available text and does
             not constitute legal advice. Consult a patent attorney for formal
             freedom-to-operate analysis.
           </p>
@@ -1607,9 +1863,9 @@ export default function ResultsClient({ jobId }: { jobId: string }) {
           alignItems: "center",
         }}
       >
-        <a href="/" className="pm-btn">
+        <Link href="/" className="pm-btn">
           + New Analysis
-        </a>
+        </Link>
         <a
           href="/dashboard"
           style={{
